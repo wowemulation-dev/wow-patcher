@@ -1,0 +1,56 @@
+[package]
+name = "wow-patcher"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+authors = ["Daniel S. Reichenbach <daniel@kogit.network>"]
+description = "World of Warcraft client patcher for TrinityCore private servers"
+repository = "https://github.com/wowemulation-dev/wow-patcher"
+license = "MIT OR Apache-2.0"
+keywords = ["wow", "warcraft", "trinitycore", "patcher", "binary"]
+categories = ["command-line-utilities", "game-development"]
+
+[dependencies]
+# Command-line interface
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Binary manipulation
+byteorder = "1.5"
+memchr = "2.7"
+
+# Platform detection
+cfg-if = "1.0"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS code signing removal
+goblin = "0.8"
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+# Testing
+tempfile = "3.8"
+assert_cmd = "2.0"
+predicates = "3.0"
+pretty_assertions = "1.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 0
