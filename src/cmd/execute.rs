@@ -14,6 +14,8 @@ pub fn execute_patch(
     input_path: &Path,
     output_path: &Path,
     key_config: KeyConfig,
+    version_url: Option<&str>,
+    cdns_url: Option<&str>,
     dry_run: bool,
     strip_codesign: bool,
     verbose: bool,
@@ -138,7 +140,7 @@ pub fn execute_patch(
 
         temp_data = data.clone();
         let version_url_replacement = create_url_replacement(
-            &get_version_url(None, None, None),
+            version_url.unwrap_or(&get_version_url(None, None, None)),
             version_url_pattern().len(),
         );
         if patch(
@@ -148,16 +150,26 @@ pub fn execute_patch(
         )
         .is_ok()
         {
-            println!("  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/...)");
+            if let Some(custom_url) = version_url {
+                println!("  ✓ Version URL → Custom CDN ({})", custom_url);
+            } else {
+                println!("  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/...)");
+            }
         } else {
             println!("  ✗ Version URL pattern not found");
         }
 
         temp_data = data.clone();
-        let cdns_url_replacement =
-            create_url_replacement(&get_cdns_url(), cdns_url_pattern().len());
+        let cdns_url_replacement = create_url_replacement(
+            cdns_url.unwrap_or(&get_cdns_url()),
+            cdns_url_pattern().len(),
+        );
         if patch(&mut temp_data, cdns_url_pattern(), &cdns_url_replacement).is_ok() {
-            println!("  ✓ CDNs URL → Arctium CDN (http://ngdp.arctium.io/customs/wow/cdns)");
+            if let Some(custom_url) = cdns_url {
+                println!("  ✓ CDNs URL → Custom CDN ({})", custom_url);
+            } else {
+                println!("  ✓ CDNs URL → Arctium CDN (http://ngdp.arctium.io/customs/wow/cdns)");
+            }
         } else {
             println!("  ✗ CDNs URL pattern not found");
         }
@@ -249,7 +261,7 @@ pub fn execute_patch(
 
     // Version URL patching
     let version_url_replacement = create_url_replacement(
-        &get_version_url(None, None, None),
+        version_url.unwrap_or(&get_version_url(None, None, None)),
         version_url_pattern().len(),
     );
     if let Err(e) = patch(&mut data, version_url_pattern(), &version_url_replacement) {
@@ -262,12 +274,19 @@ pub fn execute_patch(
     } else {
         patch_count += 1;
         if verbose {
-            println!("  ✓ Version URL patched → Arctium CDN");
+            if let Some(custom_url) = version_url {
+                println!("  ✓ Version URL patched → Custom CDN ({})", custom_url);
+            } else {
+                println!("  ✓ Version URL patched → Arctium CDN");
+            }
         }
     }
 
     // CDNs URL patching
-    let cdns_url_replacement = create_url_replacement(&get_cdns_url(), cdns_url_pattern().len());
+    let cdns_url_replacement = create_url_replacement(
+        cdns_url.unwrap_or(&get_cdns_url()),
+        cdns_url_pattern().len(),
+    );
     if let Err(e) = patch(&mut data, cdns_url_pattern(), &cdns_url_replacement) {
         if verbose {
             println!(
@@ -278,7 +297,11 @@ pub fn execute_patch(
     } else {
         patch_count += 1;
         if verbose {
-            println!("  ✓ CDNs URL patched → Arctium CDN");
+            if let Some(custom_url) = cdns_url {
+                println!("  ✓ CDNs URL patched → Custom CDN ({})", custom_url);
+            } else {
+                println!("  ✓ CDNs URL patched → Arctium CDN");
+            }
         }
     }
 

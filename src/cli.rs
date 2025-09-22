@@ -68,6 +68,14 @@ pub struct Cli {
     /// Custom Ed25519 public key as hex string (64 hex characters)
     #[arg(long = "ed25519-hex", value_name = "HEX", global = true)]
     pub ed25519_hex: Option<String>,
+
+    /// Custom version URL for CDN redirection
+    #[arg(long = "version-url", value_name = "URL", global = true)]
+    pub version_url: Option<String>,
+
+    /// Custom CDNs URL for CDN redirection
+    #[arg(long = "cdns-url", value_name = "URL", global = true)]
+    pub cdns_url: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -131,8 +139,37 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 key_config = key_config.with_ed25519_from_hex(ed25519_hex)?;
             }
 
+            // Validate URL parameters
+            if let Some(version_url) = &cli.version_url {
+                if !version_url.starts_with("http://") && !version_url.starts_with("https://") {
+                    return Err("Version URL must start with http:// or https://".into());
+                }
+                if version_url.len() > 512 {
+                    return Err("Version URL too long (max 512 characters)".into());
+                }
+            }
+
+            if let Some(cdns_url) = &cli.cdns_url {
+                if !cdns_url.starts_with("http://") && !cdns_url.starts_with("https://") {
+                    return Err("CDNs URL must start with http:// or https://".into());
+                }
+                if cdns_url.len() > 512 {
+                    return Err("CDNs URL too long (max 512 characters)".into());
+                }
+            }
+
             if cli.verbose && !key_config.is_trinity_core() {
                 println!("Using custom server keys: {}", key_config.display_info());
+            }
+
+            if cli.verbose && (cli.version_url.is_some() || cli.cdns_url.is_some()) {
+                println!("Using custom CDN URLs:");
+                if let Some(version_url) = &cli.version_url {
+                    println!("  Version URL: {}", version_url);
+                }
+                if let Some(cdns_url) = &cli.cdns_url {
+                    println!("  CDNs URL: {}", cdns_url);
+                }
             }
 
             let input_path = PathBuf::from(&location);
@@ -142,6 +179,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &input_path,
                 &output_path,
                 key_config,
+                cli.version_url.as_deref(),
+                cli.cdns_url.as_deref(),
                 cli.dry_run,
                 cli.sign,
                 cli.verbose,
