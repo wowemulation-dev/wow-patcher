@@ -5,8 +5,14 @@ pub fn find_wow_executable() -> Option<PathBuf> {
     let home = env::var("HOME").ok()?;
 
     let possible_paths = vec![
-        format!("{}/.wine/drive_c/Program Files/World of Warcraft/_retail_/Wow.exe", home),
-        format!("{}/.wine/drive_c/Program Files (x86)/World of Warcraft/_retail_/Wow.exe", home),
+        format!(
+            "{}/.wine/drive_c/Program Files/World of Warcraft/_retail_/Wow.exe",
+            home
+        ),
+        format!(
+            "{}/.wine/drive_c/Program Files (x86)/World of Warcraft/_retail_/Wow.exe",
+            home
+        ),
         format!(
             "{}/Games/world-of-warcraft/drive_c/Program Files/World of Warcraft/_retail_/Wow.exe",
             home

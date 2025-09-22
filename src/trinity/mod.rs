@@ -22,6 +22,47 @@ pub const CRYPTO_ED25519_PUBLIC_KEY: &[u8] = &[
     0x29, 0xEC, 0x36, 0x7F, 0xB0, 0xF3, 0x41, 0xF2, 0x8E, 0x0F, 0x08, 0xD0, 0x37, 0xBA, 0xFC, 0x69,
 ];
 
+/// Default replacement for version URL - using the Arctium CDN endpoint
+/// The %s placeholders are kept for runtime replacement with region and product
+pub fn get_version_url(build: Option<u32>, region: Option<&str>, product: Option<&str>) -> String {
+    let region = region.unwrap_or("%s");
+    let product = product.unwrap_or("%s");
+
+    if let Some(build) = build {
+        format!(
+            "http://ngdp.arctium.io/{}/{}/{}/versions",
+            region, product, build
+        )
+    } else {
+        // Fallback to default pattern if build is unknown
+        format!(
+            "http://ngdp.arctium.io/{}/{}/latest/versions",
+            region, product
+        )
+    }
+}
+
+/// Default replacement for CDNs URL - using the Arctium CDN endpoint
+pub fn get_cdns_url() -> String {
+    "http://ngdp.arctium.io/customs/wow/cdns".to_string()
+}
+
+/// Creates a padded byte array for URL replacement
+/// Since URLs must fit within the original space, we pad with null bytes
+pub fn create_url_replacement(url: &str, original_len: usize) -> Vec<u8> {
+    let mut result = url.as_bytes().to_vec();
+
+    // Ensure we don't exceed original length
+    if result.len() > original_len {
+        result.truncate(original_len);
+    } else {
+        // Pad with null bytes to match original length
+        result.resize(original_len, 0);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,7 +117,10 @@ mod tests {
         // Test that Ed25519 key has reasonable entropy
         let first_byte = CRYPTO_ED25519_PUBLIC_KEY[0];
         let all_same = CRYPTO_ED25519_PUBLIC_KEY.iter().all(|&b| b == first_byte);
-        assert!(!all_same, "CRYPTO_ED25519_PUBLIC_KEY contains all identical bytes");
+        assert!(
+            !all_same,
+            "CRYPTO_ED25519_PUBLIC_KEY contains all identical bytes"
+        );
     }
 
     #[test]
@@ -87,5 +131,52 @@ mod tests {
 
         assert_eq!(rsa_copy.as_slice(), RSA_MODULUS);
         assert_eq!(ed25519_copy.as_slice(), CRYPTO_ED25519_PUBLIC_KEY);
+    }
+
+    #[test]
+    fn test_get_version_url() {
+        // Test with all parameters
+        let url = get_version_url(Some(12345), Some("EU"), Some("wow"));
+        assert_eq!(url, "http://ngdp.arctium.io/EU/wow/12345/versions");
+
+        // Test with placeholders
+        let url = get_version_url(Some(12345), None, None);
+        assert_eq!(url, "http://ngdp.arctium.io/%s/%s/12345/versions");
+
+        // Test without build
+        let url = get_version_url(None, Some("EU"), Some("wow"));
+        assert_eq!(url, "http://ngdp.arctium.io/EU/wow/latest/versions");
+
+        // Test fallback pattern
+        let url = get_version_url(None, None, None);
+        assert_eq!(url, "http://ngdp.arctium.io/%s/%s/latest/versions");
+    }
+
+    #[test]
+    fn test_get_cdns_url() {
+        let url = get_cdns_url();
+        assert_eq!(url, "http://ngdp.arctium.io/customs/wow/cdns");
+    }
+
+    #[test]
+    fn test_create_url_replacement() {
+        // Test exact length
+        let url = "http://test.com";
+        let replacement = create_url_replacement(url, url.len());
+        assert_eq!(replacement.len(), url.len());
+        assert_eq!(&replacement, url.as_bytes());
+
+        // Test padding
+        let replacement = create_url_replacement(url, 20);
+        assert_eq!(replacement.len(), 20);
+        assert_eq!(&replacement[..url.len()], url.as_bytes());
+        for &b in &replacement[url.len()..] {
+            assert_eq!(b, 0);
+        }
+
+        // Test truncation
+        let replacement = create_url_replacement(url, 10);
+        assert_eq!(replacement.len(), 10);
+        assert_eq!(&replacement, &url.as_bytes()[..10]);
     }
 }

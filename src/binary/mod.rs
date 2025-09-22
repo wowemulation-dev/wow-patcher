@@ -18,11 +18,17 @@ impl PatternExt for Pattern {
 
 pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowPatcherError> {
     if data.is_empty() {
-        return Err(WowPatcherError::new(ErrorCategory::PatchingError, "cannot patch empty data"));
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "cannot patch empty data",
+        ));
     }
 
     if find.len() > data.len() {
-        return Err(WowPatcherError::new(ErrorCategory::PatchingError, "pattern longer than data"));
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "pattern longer than data",
+        ));
     }
 
     let position = find_pattern(data, find);
@@ -33,7 +39,10 @@ pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowP
             data[pos..(replace_len + pos)].copy_from_slice(&replace[..replace_len]);
             Ok(())
         }
-        None => Err(WowPatcherError::new(ErrorCategory::PatchingError, "pattern not found in data")),
+        None => Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "pattern not found in data",
+        )),
     }
 }
 
@@ -64,7 +73,9 @@ mod tests {
         assert_eq!(string_to_pattern("hello"), vec![104, 101, 108, 108, 111]);
         assert_eq!(
             string_to_pattern(".actual.battle.net"),
-            vec![46, 97, 99, 116, 117, 97, 108, 46, 98, 97, 116, 116, 108, 101, 46, 110, 101, 116]
+            vec![
+                46, 97, 99, 116, 117, 97, 108, 46, 98, 97, 116, 116, 108, 101, 46, 110, 101, 116
+            ]
         );
     }
 
@@ -161,7 +172,10 @@ mod tests {
         let replace = vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22];
 
         assert!(patch(&mut data, &find, &replace).is_ok());
-        assert_eq!(data, vec![0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, 0xFF]);
+        assert_eq!(
+            data,
+            vec![0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, 0xFF]
+        );
     }
 
     #[test]

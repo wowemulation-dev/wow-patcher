@@ -1,8 +1,13 @@
-use crate::binary::{patch, PatternExt};
+use crate::binary::{PatternExt, patch};
 use crate::errors::{ErrorCategory, WowPatcherError};
-use crate::patterns::{connect_to_modulus_pattern, crypto_ed_public_key_pattern, portal_pattern};
+use crate::patterns::{
+    cdns_url_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern, portal_pattern,
+    version_url_pattern,
+};
 use crate::platform::{detect_client_type, remove_codesigning_signature};
-use crate::trinity::{CRYPTO_ED25519_PUBLIC_KEY, RSA_MODULUS};
+use crate::trinity::{
+    CRYPTO_ED25519_PUBLIC_KEY, RSA_MODULUS, create_url_replacement, get_cdns_url, get_version_url,
+};
 use std::fs;
 use std::path::Path;
 
@@ -52,7 +57,10 @@ pub fn execute_patch(
     if metadata.len() < 1024 {
         return Err(WowPatcherError::new(
             ErrorCategory::ValidationError,
-            format!("File too small ({} bytes) to be a valid executable", metadata.len()),
+            format!(
+                "File too small ({} bytes) to be a valid executable",
+                metadata.len()
+            ),
         ));
     }
 
@@ -73,7 +81,10 @@ pub fn execute_patch(
         println!();
         println!("Input file:  {:?}", input_path);
         println!("Output file: {:?}", output_path);
-        println!("File size:   {:.2} MB", metadata.len() as f64 / (1024.0 * 1024.0));
+        println!(
+            "File size:   {:.2} MB",
+            metadata.len() as f64 / (1024.0 * 1024.0)
+        );
         println!("Client type: {}", client_type);
         println!();
         println!("Patches that would be applied:");
@@ -96,8 +107,12 @@ pub fn execute_patch(
 
         temp_data = data.clone();
         if client_type.uses_ed25519() {
-            if patch(&mut temp_data, crypto_ed_public_key_pattern(), CRYPTO_ED25519_PUBLIC_KEY)
-                .is_ok()
+            if patch(
+                &mut temp_data,
+                crypto_ed_public_key_pattern(),
+                CRYPTO_ED25519_PUBLIC_KEY,
+            )
+            .is_ok()
             {
                 println!("  ✓ Ed25519 public key → TrinityCore Ed25519 key (32 bytes)");
             } else {
@@ -105,6 +120,32 @@ pub fn execute_patch(
             }
         } else {
             println!("  ⚠ Ed25519 public key not used by {} clients", client_type);
+        }
+
+        temp_data = data.clone();
+        let version_url_replacement = create_url_replacement(
+            &get_version_url(None, None, None),
+            version_url_pattern().len(),
+        );
+        if patch(
+            &mut temp_data,
+            version_url_pattern(),
+            &version_url_replacement,
+        )
+        .is_ok()
+        {
+            println!("  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/...)");
+        } else {
+            println!("  ✗ Version URL pattern not found");
+        }
+
+        temp_data = data.clone();
+        let cdns_url_replacement =
+            create_url_replacement(&get_cdns_url(), cdns_url_pattern().len());
+        if patch(&mut temp_data, cdns_url_pattern(), &cdns_url_replacement).is_ok() {
+            println!("  ✓ CDNs URL → Arctium CDN (http://ngdp.arctium.io/customs/wow/cdns)");
+        } else {
+            println!("  ✗ CDNs URL pattern not found");
         }
 
         if strip_codesign && cfg!(target_os = "macos") {
@@ -159,10 +200,16 @@ pub fn execute_patch(
 
     // Ed25519 (optional based on client type)
     if client_type.uses_ed25519() {
-        if let Err(e) = patch(&mut data, crypto_ed_public_key_pattern(), CRYPTO_ED25519_PUBLIC_KEY)
-        {
+        if let Err(e) = patch(
+            &mut data,
+            crypto_ed_public_key_pattern(),
+            CRYPTO_ED25519_PUBLIC_KEY,
+        ) {
             if verbose {
-                println!("  ⚠ Ed25519 pattern not found (may be unsupported version): {}", e);
+                println!(
+                    "  ⚠ Ed25519 pattern not found (may be unsupported version): {}",
+                    e
+                );
             }
         } else {
             patch_count += 1;
@@ -172,6 +219,41 @@ pub fn execute_patch(
         }
     } else if verbose {
         println!("  ℹ {} clients use RSA-based authentication", client_type);
+    }
+
+    // Version URL patching
+    let version_url_replacement = create_url_replacement(
+        &get_version_url(None, None, None),
+        version_url_pattern().len(),
+    );
+    if let Err(e) = patch(&mut data, version_url_pattern(), &version_url_replacement) {
+        if verbose {
+            println!(
+                "  ⚠ Version URL pattern not found (may be custom build): {}",
+                e
+            );
+        }
+    } else {
+        patch_count += 1;
+        if verbose {
+            println!("  ✓ Version URL patched → Arctium CDN");
+        }
+    }
+
+    // CDNs URL patching
+    let cdns_url_replacement = create_url_replacement(&get_cdns_url(), cdns_url_pattern().len());
+    if let Err(e) = patch(&mut data, cdns_url_pattern(), &cdns_url_replacement) {
+        if verbose {
+            println!(
+                "  ⚠ CDNs URL pattern not found (may be custom build): {}",
+                e
+            );
+        }
+    } else {
+        patch_count += 1;
+        if verbose {
+            println!("  ✓ CDNs URL patched → Arctium CDN");
+        }
     }
 
     // Create output directory if needed
@@ -227,7 +309,10 @@ pub fn execute_patch(
         }
     }
 
-    println!("✅ Successfully applied {} patches and saved to {:?}", patch_count, output_path);
+    println!(
+        "✅ Successfully applied {} patches and saved to {:?}",
+        patch_count, output_path
+    );
     println!();
     println!("The patched client can now connect to TrinityCore private servers.");
 

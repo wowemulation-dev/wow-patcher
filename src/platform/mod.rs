@@ -43,8 +43,11 @@ pub fn detect_client_type(exe_path: &str) -> ClientType {
     }
 
     // Check filename
-    let filename =
-        Path::new(exe_path).file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let filename = Path::new(exe_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     if filename.contains("wowclassic") {
         return ClientType::Classic;
@@ -100,7 +103,9 @@ mod tests {
         );
 
         assert_eq!(
-            detect_client_type("/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"),
+            detect_client_type(
+                "/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
+            ),
             ClientType::Retail
         );
 
@@ -118,9 +123,15 @@ mod tests {
 
         assert_eq!(detect_client_type("Wow.exe"), ClientType::Retail);
 
-        assert_eq!(detect_client_type("/some/path/game.exe"), ClientType::Unknown);
+        assert_eq!(
+            detect_client_type("/some/path/game.exe"),
+            ClientType::Unknown
+        );
 
-        assert_eq!(detect_client_type("C:\\Games\\WoW\\_RETAIL_\\WOW.EXE"), ClientType::Retail);
+        assert_eq!(
+            detect_client_type("C:\\Games\\WoW\\_RETAIL_\\WOW.EXE"),
+            ClientType::Retail
+        );
     }
 
     #[test]

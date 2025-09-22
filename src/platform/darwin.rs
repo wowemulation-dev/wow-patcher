@@ -3,8 +3,11 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn remove_codesign(path: &Path) -> Result<(), WowPatcherError> {
-    let output =
-        Command::new("codesign").arg("--remove-signature").arg(path).output().map_err(|e| {
+    let output = Command::new("codesign")
+        .arg("--remove-signature")
+        .arg(path)
+        .output()
+        .map_err(|e| {
             WowPatcherError::wrap(
                 crate::errors::ErrorCategory::PlatformError,
                 "Failed to execute codesign command",

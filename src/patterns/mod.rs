@@ -1,11 +1,13 @@
 #[cfg(test)]
 use crate::binary::PatternExt;
-use crate::binary::{string_to_pattern, Pattern};
+use crate::binary::{Pattern, string_to_pattern};
 use std::sync::OnceLock;
 
 pub static PORTAL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CONNECT_TO_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CRYPTO_ED_PUBLIC_KEY_PATTERN: OnceLock<Pattern> = OnceLock::new();
+pub static VERSION_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
+pub static CDNS_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 
 pub fn portal_pattern() -> &'static Pattern {
     PORTAL_PATTERN.get_or_init(|| string_to_pattern(".actual.battle.net"))
@@ -18,6 +20,15 @@ pub fn connect_to_modulus_pattern() -> &'static Pattern {
 pub fn crypto_ed_public_key_pattern() -> &'static Pattern {
     CRYPTO_ED_PUBLIC_KEY_PATTERN
         .get_or_init(|| vec![0x15, 0xD6, 0x18, 0xBD, 0x7D, 0xB5, 0x77, 0xBD])
+}
+
+pub fn version_url_pattern() -> &'static Pattern {
+    VERSION_URL_PATTERN
+        .get_or_init(|| string_to_pattern("http://%s.patch.battle.net:1119/%s/versions"))
+}
+
+pub fn cdns_url_pattern() -> &'static Pattern {
+    CDNS_URL_PATTERN.get_or_init(|| string_to_pattern("http://%s.patch.battle.net:1119/%s/cdns"))
 }
 
 #[cfg(test)]
@@ -63,7 +74,10 @@ mod tests {
     fn test_patterns_are_distinct() {
         assert_ne!(*portal_pattern(), *connect_to_modulus_pattern());
         assert_ne!(*portal_pattern(), *crypto_ed_public_key_pattern());
-        assert_ne!(*connect_to_modulus_pattern(), *crypto_ed_public_key_pattern());
+        assert_ne!(
+            *connect_to_modulus_pattern(),
+            *crypto_ed_public_key_pattern()
+        );
     }
 
     #[test]
@@ -74,5 +88,38 @@ mod tests {
         for &b in &empty {
             assert_eq!(b, 0);
         }
+    }
+
+    #[test]
+    fn test_version_url_pattern() {
+        let expected = string_to_pattern("http://%s.patch.battle.net:1119/%s/versions");
+        assert_eq!(*version_url_pattern(), expected);
+
+        let expected_string = "http://%s.patch.battle.net:1119/%s/versions";
+        assert_eq!(version_url_pattern().len(), expected_string.len());
+
+        for (i, ch) in expected_string.chars().enumerate() {
+            assert_eq!(version_url_pattern()[i], ch as i16);
+        }
+    }
+
+    #[test]
+    fn test_cdns_url_pattern() {
+        let expected = string_to_pattern("http://%s.patch.battle.net:1119/%s/cdns");
+        assert_eq!(*cdns_url_pattern(), expected);
+
+        let expected_string = "http://%s.patch.battle.net:1119/%s/cdns";
+        assert_eq!(cdns_url_pattern().len(), expected_string.len());
+
+        for (i, ch) in expected_string.chars().enumerate() {
+            assert_eq!(cdns_url_pattern()[i], ch as i16);
+        }
+    }
+
+    #[test]
+    fn test_url_patterns_are_distinct() {
+        assert_ne!(*version_url_pattern(), *cdns_url_pattern());
+        assert_ne!(*version_url_pattern(), *portal_pattern());
+        assert_ne!(*cdns_url_pattern(), *portal_pattern());
     }
 }

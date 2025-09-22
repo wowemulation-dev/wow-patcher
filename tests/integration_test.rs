@@ -1,10 +1,10 @@
-use wow_patcher::binary::{patch, PatternExt};
+use std::fs;
+use tempfile::TempDir;
+use wow_patcher::binary::{PatternExt, patch};
 use wow_patcher::patterns::{
     connect_to_modulus_pattern, crypto_ed_public_key_pattern, portal_pattern,
 };
 use wow_patcher::trinity::{CRYPTO_ED25519_PUBLIC_KEY, RSA_MODULUS};
-use std::fs;
-use tempfile::TempDir;
 
 fn create_mock_executable() -> Vec<u8> {
     let size = 100 * 1024;
@@ -45,7 +45,11 @@ fn test_full_patching_workflow() {
     // Apply patches
     let _ = patch(&mut data, portal_pattern(), &portal_pattern().empty());
     let _ = patch(&mut data, connect_to_modulus_pattern(), RSA_MODULUS);
-    let _ = patch(&mut data, crypto_ed_public_key_pattern(), CRYPTO_ED25519_PUBLIC_KEY);
+    let _ = patch(
+        &mut data,
+        crypto_ed_public_key_pattern(),
+        CRYPTO_ED25519_PUBLIC_KEY,
+    );
 
     // Write output
     fs::write(&output_file, &data).unwrap();
@@ -83,7 +87,11 @@ fn test_patching_with_real_patterns() {
     let result = patch(&mut data, connect_to_modulus_pattern(), RSA_MODULUS);
     assert!(result.is_ok());
 
-    let result = patch(&mut data, crypto_ed_public_key_pattern(), CRYPTO_ED25519_PUBLIC_KEY);
+    let result = patch(
+        &mut data,
+        crypto_ed_public_key_pattern(),
+        CRYPTO_ED25519_PUBLIC_KEY,
+    );
     assert!(result.is_ok());
 
     // Verify patches were applied
@@ -94,7 +102,10 @@ fn test_patching_with_real_patterns() {
 
     // Check RSA pattern was replaced
     let rsa_replaced_len = RSA_MODULUS.len().min(rsa_pattern.len());
-    assert_eq!(&data[rsa_offset..rsa_offset + rsa_replaced_len], &RSA_MODULUS[..rsa_replaced_len]);
+    assert_eq!(
+        &data[rsa_offset..rsa_offset + rsa_replaced_len],
+        &RSA_MODULUS[..rsa_replaced_len]
+    );
 
     // Check Ed25519 pattern was replaced
     let ed_replaced_len = CRYPTO_ED25519_PUBLIC_KEY.len().min(ed_pattern.len());

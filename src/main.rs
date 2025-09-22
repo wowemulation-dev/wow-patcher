@@ -1,5 +1,5 @@
-use wow_patcher::cmd;
 use std::process;
+use wow_patcher::cmd;
 
 fn main() {
     if let Err(e) = cmd::run() {

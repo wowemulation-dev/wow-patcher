@@ -6,7 +6,11 @@ static DATE: OnceLock<String> = OnceLock::new();
 static BUILT_BY: OnceLock<String> = OnceLock::new();
 
 pub fn version() -> &'static str {
-    VERSION.get_or_init(|| option_env!("CARGO_PKG_VERSION").unwrap_or("dev").to_string())
+    VERSION.get_or_init(|| {
+        option_env!("CARGO_PKG_VERSION")
+            .unwrap_or("dev")
+            .to_string()
+    })
 }
 
 pub fn commit() -> &'static str {
