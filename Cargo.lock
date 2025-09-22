@@ -985,6 +985,7 @@ dependencies = [
  "memchr",
  "predicates",
  "pretty_assertions",
+ "regex",
  "tempfile",
  "thiserror",
 ]

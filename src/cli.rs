@@ -76,6 +76,10 @@ pub struct Cli {
     /// Custom CDNs URL for CDN redirection
     #[arg(long = "cdns-url", value_name = "URL", global = true)]
     pub cdns_url: Option<String>,
+
+    /// Use static auth seed (179D3DC3235629D07113A9B3867F97A7) for TrinityCore development
+    #[arg(long = "static-seed", default_value_t = false, global = true)]
+    pub static_seed: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -104,7 +108,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Default behavior - patch the file
             let location = cli
                 .location
-                .unwrap_or_else(|| crate::platform::find_warcraft_client_executable());
+                .unwrap_or_else(crate::platform::find_warcraft_client_executable);
 
             if location.is_empty() {
                 return Err("No WoW executable specified. Use -l flag to specify the path.".into());
@@ -172,6 +176,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            if cli.static_seed {
+                println!(
+                    "Static auth seed enabled. Ensure your TrinityCore server is configured with seed: 179D3DC3235629D07113A9B3867F97A7"
+                );
+            }
+
             let input_path = PathBuf::from(&location);
             let output_path = PathBuf::from(cli.output.unwrap_or_else(|| "Arctium".to_string()));
 
@@ -181,6 +191,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 key_config,
                 cli.version_url.as_deref(),
                 cli.cdns_url.as_deref(),
+                cli.static_seed,
                 cli.dry_run,
                 cli.sign,
                 cli.verbose,

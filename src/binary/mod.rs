@@ -16,6 +16,22 @@ impl PatternExt for Pattern {
     }
 }
 
+pub trait DataExt {
+    fn find_pattern(&self, pattern: &Pattern) -> Option<usize>;
+}
+
+impl DataExt for Vec<u8> {
+    fn find_pattern(&self, pattern: &Pattern) -> Option<usize> {
+        find_pattern(self, pattern)
+    }
+}
+
+impl DataExt for [u8] {
+    fn find_pattern(&self, pattern: &Pattern) -> Option<usize> {
+        find_pattern(self, pattern)
+    }
+}
+
 pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowPatcherError> {
     if data.is_empty() {
         return Err(WowPatcherError::new(

@@ -1,21 +1,27 @@
-use crate::binary::{PatternExt, patch};
+use crate::binary::{DataExt, PatternExt, patch};
 use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
 use crate::patterns::{
-    cdns_url_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern, portal_pattern,
-    version_url_pattern,
+    auth_seed_pattern, cdns_url_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern,
+    portal_pattern, version_url_pattern,
 };
-use crate::platform::{detect_client_type, remove_codesigning_signature};
-use crate::trinity::{create_url_replacement, get_cdns_url, get_version_url};
+use crate::platform::{
+    detect_client_type, extract_version, extract_version_fallback, remove_codesigning_signature,
+};
+use crate::trinity::{
+    create_auth_seed_patch, create_url_replacement, get_cdns_url, get_version_url,
+};
 use std::fs;
 use std::path::Path;
 
+#[allow(clippy::too_many_arguments)]
 pub fn execute_patch(
     input_path: &Path,
     output_path: &Path,
     key_config: KeyConfig,
     version_url: Option<&str>,
     cdns_url: Option<&str>,
+    use_static_seed: bool,
     dry_run: bool,
     strip_codesign: bool,
     verbose: bool,
@@ -68,6 +74,17 @@ pub fn execute_patch(
 
     // Detect client type
     let client_type = detect_client_type(input_path.to_str().unwrap_or(""));
+
+    // Extract version information
+    let version = extract_version(input_path).or_else(|| extract_version_fallback(input_path));
+
+    if let Some(ref v) = version {
+        if verbose {
+            println!("Detected client version: {}", v);
+        }
+    } else if verbose {
+        println!("Unable to extract version from executable, using fallback URL");
+    }
 
     // Read the file
     let mut data = fs::read(input_path).map_err(|e| {
@@ -139,8 +156,9 @@ pub fn execute_patch(
         }
 
         temp_data = data.clone();
+        let build_num = version.as_ref().map(|v| v.build as u32);
         let version_url_replacement = create_url_replacement(
-            version_url.unwrap_or(&get_version_url(None, None, None)),
+            version_url.unwrap_or(&get_version_url(build_num, None, None)),
             version_url_pattern().len(),
         );
         if patch(
@@ -152,8 +170,15 @@ pub fn execute_patch(
         {
             if let Some(custom_url) = version_url {
                 println!("  ✓ Version URL → Custom CDN ({})", custom_url);
+            } else if let Some(build_num) = build_num {
+                println!(
+                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{}/versions)",
+                    build_num
+                );
             } else {
-                println!("  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/...)");
+                println!(
+                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/latest/versions)"
+                );
             }
         } else {
             println!("  ✗ Version URL pattern not found");
@@ -172,6 +197,15 @@ pub fn execute_patch(
             }
         } else {
             println!("  ✗ CDNs URL pattern not found");
+        }
+
+        if use_static_seed {
+            temp_data = data.clone();
+            if let Some(_auth_seed_offset) = temp_data.find_pattern(auth_seed_pattern()) {
+                println!("  ✓ Auth seed function → static seed (179D3DC3235629D07113A9B3867F97A7)");
+            } else {
+                println!("  ✗ Auth seed pattern not found");
+            }
         }
 
         if strip_codesign && cfg!(target_os = "macos") {
@@ -260,8 +294,9 @@ pub fn execute_patch(
     }
 
     // Version URL patching
+    let build_num = version.as_ref().map(|v| v.build as u32);
     let version_url_replacement = create_url_replacement(
-        version_url.unwrap_or(&get_version_url(None, None, None)),
+        version_url.unwrap_or(&get_version_url(build_num, None, None)),
         version_url_pattern().len(),
     );
     if let Err(e) = patch(&mut data, version_url_pattern(), &version_url_replacement) {
@@ -302,6 +337,33 @@ pub fn execute_patch(
             } else {
                 println!("  ✓ CDNs URL patched → Arctium CDN");
             }
+        }
+    }
+
+    // Auth seed patching
+    if use_static_seed {
+        if let Some(auth_seed_offset) = data.find_pattern(auth_seed_pattern()) {
+            // Find the RSA modulus offset first (we need it for the relative offset calculation)
+            if let Some(modulus_offset) = data.find_pattern(connect_to_modulus_pattern()) {
+                let auth_seed_patch = create_auth_seed_patch(auth_seed_offset, modulus_offset)?;
+
+                // Apply the auth seed patch at the function location
+                let function_offset = auth_seed_offset + 4 + 5; // Skip "WoW\0" and call instruction
+                if function_offset + auth_seed_patch.len() <= data.len() {
+                    data[function_offset..function_offset + auth_seed_patch.len()]
+                        .copy_from_slice(&auth_seed_patch);
+                    patch_count += 1;
+                    if verbose {
+                        println!("  ✓ Auth seed function patched → static seed");
+                    }
+                } else if verbose {
+                    println!("  ✗ Auth seed function offset out of bounds");
+                }
+            } else if verbose {
+                println!("  ✗ Cannot patch auth seed without RSA modulus location");
+            }
+        } else if verbose {
+            println!("  ⚠ Auth seed pattern not found (may not be required for this version)");
         }
     }
 

@@ -22,6 +22,8 @@ thiserror = "1.0"
 byteorder = "1.5"
 memchr = "2.7"
 hex = "0.4"
+goblin = "0.8"  # PE/Mach-O/ELF parsing for version extraction and code signing
+regex = "1.11"  # For version pattern matching in binaries
 
 # Platform detection
 cfg-if = "1.0"
@@ -29,10 +31,6 @@ cfg-if = "1.0"
 # Logging
 env_logger = "0.11"
 log = "0.4"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# macOS code signing removal
-goblin = "0.8"
 
 [build-dependencies]
 chrono = "0.4"
