@@ -1,8 +1,8 @@
 use std::process;
-use wow_patcher::cmd;
+use wow_patcher::cli;
 
 fn main() {
-    if let Err(e) = cmd::run() {
+    if let Err(e) = cli::run() {
         eprintln!("❌ Patching failed - the client has not been modified.");
         eprintln!();
         eprintln!("Error: {}", e);

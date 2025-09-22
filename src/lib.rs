@@ -1,6 +1,8 @@
 pub mod binary;
+pub mod cli;
 pub mod cmd;
 pub mod errors;
+pub mod keys;
 pub mod patterns;
 pub mod platform;
 pub mod trinity;

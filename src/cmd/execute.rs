@@ -1,19 +1,19 @@
 use crate::binary::{PatternExt, patch};
 use crate::errors::{ErrorCategory, WowPatcherError};
+use crate::keys::KeyConfig;
 use crate::patterns::{
     cdns_url_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern, portal_pattern,
     version_url_pattern,
 };
 use crate::platform::{detect_client_type, remove_codesigning_signature};
-use crate::trinity::{
-    CRYPTO_ED25519_PUBLIC_KEY, RSA_MODULUS, create_url_replacement, get_cdns_url, get_version_url,
-};
+use crate::trinity::{create_url_replacement, get_cdns_url, get_version_url};
 use std::fs;
 use std::path::Path;
 
 pub fn execute_patch(
     input_path: &Path,
     output_path: &Path,
+    key_config: KeyConfig,
     dry_run: bool,
     strip_codesign: bool,
     verbose: bool,
@@ -99,8 +99,18 @@ pub fn execute_patch(
         }
 
         temp_data = data.clone();
-        if patch(&mut temp_data, connect_to_modulus_pattern(), RSA_MODULUS).is_ok() {
-            println!("  ✓ RSA modulus → TrinityCore RSA key (256 bytes)");
+        if patch(
+            &mut temp_data,
+            connect_to_modulus_pattern(),
+            key_config.rsa_modulus(),
+        )
+        .is_ok()
+        {
+            if key_config.is_trinity_core() {
+                println!("  ✓ RSA modulus → TrinityCore RSA key (256 bytes)");
+            } else {
+                println!("  ✓ RSA modulus → Custom RSA key (256 bytes)");
+            }
         } else {
             println!("  ✗ RSA modulus pattern not found");
         }
@@ -110,11 +120,15 @@ pub fn execute_patch(
             if patch(
                 &mut temp_data,
                 crypto_ed_public_key_pattern(),
-                CRYPTO_ED25519_PUBLIC_KEY,
+                key_config.ed25519_public_key(),
             )
             .is_ok()
             {
-                println!("  ✓ Ed25519 public key → TrinityCore Ed25519 key (32 bytes)");
+                if key_config.is_trinity_core() {
+                    println!("  ✓ Ed25519 public key → TrinityCore Ed25519 key (32 bytes)");
+                } else {
+                    println!("  ✓ Ed25519 public key → Custom Ed25519 key (32 bytes)");
+                }
             } else {
                 println!("  ✗ Ed25519 public key pattern not found");
             }
@@ -182,7 +196,11 @@ pub fn execute_patch(
     }
 
     // RSA modulus
-    if let Err(e) = patch(&mut data, connect_to_modulus_pattern(), RSA_MODULUS) {
+    if let Err(e) = patch(
+        &mut data,
+        connect_to_modulus_pattern(),
+        key_config.rsa_modulus(),
+    ) {
         if verbose {
             println!("  ✗ RSA modulus pattern not found: {}", e);
         }
@@ -194,7 +212,11 @@ pub fn execute_patch(
     } else {
         patch_count += 1;
         if verbose {
-            println!("  ✓ RSA modulus patched");
+            if key_config.is_trinity_core() {
+                println!("  ✓ RSA modulus patched (TrinityCore key)");
+            } else {
+                println!("  ✓ RSA modulus patched (custom key)");
+            }
         }
     }
 
@@ -203,7 +225,7 @@ pub fn execute_patch(
         if let Err(e) = patch(
             &mut data,
             crypto_ed_public_key_pattern(),
-            CRYPTO_ED25519_PUBLIC_KEY,
+            key_config.ed25519_public_key(),
         ) {
             if verbose {
                 println!(
@@ -214,7 +236,11 @@ pub fn execute_patch(
         } else {
             patch_count += 1;
             if verbose {
-                println!("  ✓ Ed25519 public key patched");
+                if key_config.is_trinity_core() {
+                    println!("  ✓ Ed25519 public key patched (TrinityCore key)");
+                } else {
+                    println!("  ✓ Ed25519 public key patched (custom key)");
+                }
             }
         }
     } else if verbose {
