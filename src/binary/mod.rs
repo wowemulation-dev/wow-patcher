@@ -1,5 +1,8 @@
 use crate::errors::{ErrorCategory, WowPatcherError};
 
+pub mod section;
+pub use section::{SectionInfo, check_offset_section, validate_patch_offsets};
+
 pub type Pattern = Vec<i16>;
 
 pub fn string_to_pattern(s: &str) -> Pattern {
