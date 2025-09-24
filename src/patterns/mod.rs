@@ -8,7 +8,6 @@ pub static CONNECT_TO_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CRYPTO_ED_PUBLIC_KEY_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static VERSION_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CDNS_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
-pub static AUTH_SEED_PATTERN: OnceLock<Pattern> = OnceLock::new();
 
 pub fn portal_pattern() -> &'static Pattern {
     PORTAL_PATTERN.get_or_init(|| string_to_pattern(".actual.battle.net"))
@@ -30,15 +29,6 @@ pub fn version_url_pattern() -> &'static Pattern {
 
 pub fn cdns_url_pattern() -> &'static Pattern {
     CDNS_URL_PATTERN.get_or_init(|| string_to_pattern("http://%s.patch.battle.net:1119/%s/cdns"))
-}
-
-pub fn auth_seed_pattern() -> &'static Pattern {
-    AUTH_SEED_PATTERN.get_or_init(|| {
-        let mut pattern = vec![0x57, 0x6F, 0x57, 0x00, 0xE8];
-        pattern.extend_from_slice(&[-1; 4]);
-        pattern.extend_from_slice(&[0x48, 0x8D]);
-        pattern
-    })
 }
 
 #[cfg(test)]
@@ -131,24 +121,5 @@ mod tests {
         assert_ne!(*version_url_pattern(), *cdns_url_pattern());
         assert_ne!(*version_url_pattern(), *portal_pattern());
         assert_ne!(*cdns_url_pattern(), *portal_pattern());
-    }
-
-    #[test]
-    fn test_auth_seed_pattern() {
-        let pattern = auth_seed_pattern();
-        assert_eq!(pattern.len(), 11);
-
-        assert_eq!(pattern[0], 0x57);
-        assert_eq!(pattern[1], 0x6F);
-        assert_eq!(pattern[2], 0x57);
-        assert_eq!(pattern[3], 0x00);
-        assert_eq!(pattern[4], 0xE8);
-
-        for i in 5..9 {
-            assert_eq!(pattern[i], -1);
-        }
-
-        assert_eq!(pattern[9], 0x48);
-        assert_eq!(pattern[10], 0x8D);
     }
 }

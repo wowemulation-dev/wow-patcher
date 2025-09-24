@@ -56,15 +56,26 @@ wow-patcher --dry-run -l ./Wow.exe
 ### Command-Line Options
 
 ```
-Usage: wow-patcher [OPTIONS]
+Usage: wow-patcher [OPTIONS] [COMMAND]
+
+Commands:
+  version  Print version information
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --warcraft-exe <PATH>     Path to the WoW executable
-  -o, --output-file <NAME>      Output filename [default: Arctium]
-  -s, --strip-binary-codesign   Remove macOS code signing [default: true]
-  -n, --dry-run                  Preview changes without modifying files
-  -h, --help                     Print help information
-  -V, --version                  Print version information
+  -l, --warcraft-exe <FILE>         Path to the WoW executable (auto-detected on macOS)
+  -o, --output-file <FILE>          Output filename [default: Arctium]
+  -n, --dry-run                      Preview changes without modifying files
+  -s, --strip-binary-codesign       Remove macOS code signing [default: true]
+  -v, --verbose                      Enable verbose output
+      --rsa-file <FILE>              Custom RSA modulus file (256 bytes binary)
+      --rsa-hex <HEX>                Custom RSA modulus as hex string (512 hex characters)
+      --ed25519-file <FILE>          Custom Ed25519 public key file (32 bytes binary)
+      --ed25519-hex <HEX>            Custom Ed25519 public key as hex string (64 hex characters)
+      --version-url <URL>            Custom version URL for CDN redirection
+      --cdns-url <URL>               Custom CDNs URL for CDN redirection
+  -h, --help                         Print help information
+  -V, --version                      Print version information
 ```
 
 ### Platform-Specific Examples
@@ -100,6 +111,67 @@ wow-patcher -l /opt/wow/Wow.exe -o /home/user/games/wow-tc
 
 # Wine installation example
 wow-patcher -l "$HOME/.wine/drive_c/Program Files/World of Warcraft/_retail_/Wow.exe" -o ./WowPrivate.exe
+```
+
+### Advanced Options
+
+#### Custom Cryptographic Keys
+
+If you're connecting to a server that uses different cryptographic keys than standard TrinityCore:
+
+```bash
+# Using custom RSA modulus from a file (256 bytes)
+wow-patcher -l ./Wow.exe --rsa-file ./custom_rsa.bin
+
+# Using custom RSA modulus as hex string (512 hex characters)
+wow-patcher -l ./Wow.exe --rsa-hex "91D59BB7D4E183A5EC3710..." # (512 hex chars total)
+
+# Using custom Ed25519 public key from a file (32 bytes)
+wow-patcher -l ./Wow.exe --ed25519-file ./custom_ed25519.bin
+
+# Using custom Ed25519 public key as hex string (64 hex characters)
+wow-patcher -l ./Wow.exe --ed25519-hex "15D618BD7DB577BD..." # (64 hex chars total)
+
+# Combining custom keys
+wow-patcher -l ./Wow.exe --rsa-file ./rsa.bin --ed25519-hex "15D618BD..."
+```
+
+#### CDN Redirection
+
+Redirect the client to custom CDN servers for game data and patches:
+
+```bash
+# Custom version server
+wow-patcher -l ./Wow.exe --version-url "http://my-cdn.example.com/versions"
+
+# Custom CDNs server
+wow-patcher -l ./Wow.exe --cdns-url "http://my-cdn.example.com/cdns"
+
+# Both CDN URLs
+wow-patcher -l ./Wow.exe --version-url "http://cdn.myserver.com/versions" --cdns-url "http://cdn.myserver.com/cdns"
+```
+
+#### Development Options
+
+```bash
+# Enable verbose output for debugging
+wow-patcher -l ./Wow.exe -v
+
+# Combine with dry-run to preview all changes
+wow-patcher -l ./Wow.exe -v --dry-run --version-url "http://local.test/versions"
+
+# Test custom keys without applying changes
+wow-patcher -l ./Wow.exe --dry-run --rsa-file ./test_rsa.bin --ed25519-file ./test_ed25519.bin
+```
+
+#### Version Command
+
+```bash
+# Show basic version information
+wow-patcher version
+
+# Show detailed version information with build metadata
+wow-patcher version --detailed
 ```
 
 ## Requirements

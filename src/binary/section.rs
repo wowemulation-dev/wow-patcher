@@ -190,7 +190,10 @@ mod tests {
             file_offset: 0,
             is_patchable: true,
         };
-        assert!(data_section.is_patchable, "__DATA sections should be patchable");
+        assert!(
+            data_section.is_patchable,
+            "__DATA sections should be patchable"
+        );
 
         let text_section = SectionInfo {
             name: "__TEXT.__text".to_string(),
@@ -199,7 +202,10 @@ mod tests {
             file_offset: 0,
             is_patchable: false,
         };
-        assert!(!text_section.is_patchable, "__TEXT.__text should NOT be patchable");
+        assert!(
+            !text_section.is_patchable,
+            "__TEXT.__text should NOT be patchable"
+        );
 
         let const_section = SectionInfo {
             name: "__TEXT.__const".to_string(),
@@ -208,6 +214,9 @@ mod tests {
             file_offset: 0,
             is_patchable: true,
         };
-        assert!(const_section.is_patchable, "__TEXT.__const should be patchable (read-only data)");
+        assert!(
+            const_section.is_patchable,
+            "__TEXT.__const should be patchable (read-only data)"
+        );
     }
 }

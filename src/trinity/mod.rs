@@ -63,39 +63,6 @@ pub fn create_url_replacement(url: &str, original_len: usize) -> Vec<u8> {
     result
 }
 
-/// Creates the auth seed patch that returns a static seed value
-/// This generates x86-64 assembly that loads a fixed value from the RSA modulus location
-/// The resulting auth seed will be: 179D3DC3235629D07113A9B3867F97A7
-pub fn create_auth_seed_patch(
-    auth_seed_offset: usize,
-    modulus_offset: usize,
-) -> Result<Vec<u8>, crate::errors::WowPatcherError> {
-    // Calculate the relative offset from the auth seed function to the modulus
-    // The patch will be placed after the "WoW\0" string and the call instruction
-    let function_offset = auth_seed_offset + 4 + 5; // Skip "WoW\0" (4 bytes) and call (5 bytes)
-
-    // The modulus contains 0xDEADBEEF at a specific position which generates our static seed
-    // We need to calculate the RIP-relative offset for the movaps instruction
-    let relative_offset = if modulus_offset > function_offset {
-        (modulus_offset - function_offset - 7) as u32
-    } else {
-        return Err(crate::errors::WowPatcherError::new(
-            crate::errors::ErrorCategory::PatchingError,
-            "Invalid offset calculation for auth seed patch",
-        ));
-    };
-
-    // Create the assembly patch:
-    // movaps xmm0, [rip + offset]  ; 0x0F 0x28 0x05 + 4-byte offset
-    // movups [rdx], xmm0           ; 0x0F 0x11 0x02
-    // ret                          ; 0xC3
-    let mut patch = vec![0x0F, 0x28, 0x05];
-    patch.extend_from_slice(&relative_offset.to_le_bytes());
-    patch.extend_from_slice(&[0x0F, 0x11, 0x02, 0xC3]);
-
-    Ok(patch)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,27 +178,5 @@ mod tests {
         let replacement = create_url_replacement(url, 10);
         assert_eq!(replacement.len(), 10);
         assert_eq!(&replacement, &url.as_bytes()[..10]);
-    }
-
-    #[test]
-    fn test_create_auth_seed_patch() {
-        // Test basic patch creation
-        let patch = create_auth_seed_patch(0x1000, 0x2000).unwrap();
-        assert_eq!(patch.len(), 11);
-
-        // Verify the assembly instructions
-        assert_eq!(patch[0], 0x0F); // movaps
-        assert_eq!(patch[1], 0x28);
-        assert_eq!(patch[2], 0x05);
-
-        assert_eq!(patch[7], 0x0F); // movups
-        assert_eq!(patch[8], 0x11);
-        assert_eq!(patch[9], 0x02);
-
-        assert_eq!(patch[10], 0xC3); // ret
-
-        // Test invalid offset (modulus before auth seed)
-        let result = create_auth_seed_patch(0x2000, 0x1000);
-        assert!(result.is_err());
     }
 }
