@@ -27,6 +27,11 @@ impl KeyConfig {
         }
     }
 
+    /// Create a new KeyConfig with custom keys (alias for custom)
+    pub fn new(rsa_modulus: &[u8], ed25519_public_key: &[u8]) -> Result<Self, WowPatcherError> {
+        Self::custom(rsa_modulus.to_vec(), ed25519_public_key.to_vec())
+    }
+
     /// Create a new KeyConfig with custom keys
     pub fn custom(
         rsa_modulus: Vec<u8>,
@@ -38,6 +43,23 @@ impl KeyConfig {
         };
         config.validate()?;
         Ok(config)
+    }
+
+    /// Load keys from files
+    pub fn from_files<P: AsRef<Path>>(
+        rsa_file: P,
+        ed25519_file: P,
+    ) -> Result<Self, WowPatcherError> {
+        Self::trinity_core()
+            .with_rsa_from_file(rsa_file)?
+            .with_ed25519_from_file(ed25519_file)
+    }
+
+    /// Load keys from hex strings
+    pub fn from_hex(rsa_hex: &str, ed25519_hex: &str) -> Result<Self, WowPatcherError> {
+        Self::trinity_core()
+            .with_rsa_from_hex(rsa_hex)?
+            .with_ed25519_from_hex(ed25519_hex)
     }
 
     /// Load RSA modulus from a binary file

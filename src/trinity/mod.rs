@@ -47,6 +47,22 @@ pub fn get_cdns_url() -> String {
     "http://ngdp.arctium.io/customs/wow/cdns".to_string()
 }
 
+/// Unified API URL for WoW Classic 1.15.8+ clients
+/// Format: http://host/{region}/{product}/{endpoint}
+/// The three %s placeholders allow the client to substitute region, product, and endpoint
+/// (endpoint will be "versions", "cdns", "bgdl", etc.)
+pub fn get_unified_api_url(build: Option<u32>) -> String {
+    if let Some(build) = build {
+        // With build number: http://ngdp.arctium.io/%s/%s/{build}/%s
+        // This allows: region/product/build/endpoint
+        format!("http://ngdp.arctium.io/%s/%s/{}/%s", build)
+    } else {
+        // Without build: http://ngdp.arctium.io/%s/%s/%s
+        // This preserves the original format with all three placeholders
+        "http://ngdp.arctium.io/%s/%s/%s".to_string()
+    }
+}
+
 /// Creates a padded byte array for URL replacement
 /// Since URLs must fit within the original space, we pad with null bytes
 pub fn create_url_replacement(url: &str, original_len: usize) -> Vec<u8> {
@@ -156,6 +172,17 @@ mod tests {
     fn test_get_cdns_url() {
         let url = get_cdns_url();
         assert_eq!(url, "http://ngdp.arctium.io/customs/wow/cdns");
+    }
+
+    #[test]
+    fn test_get_unified_api_url() {
+        // Test with build number
+        let url = get_unified_api_url(Some(64272));
+        assert_eq!(url, "http://ngdp.arctium.io/%s/%s/64272/%s");
+
+        // Test without build number (preserves all placeholders)
+        let url = get_unified_api_url(None);
+        assert_eq!(url, "http://ngdp.arctium.io/%s/%s/%s");
     }
 
     #[test]

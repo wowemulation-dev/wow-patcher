@@ -11,9 +11,6 @@ keywords = ["wow", "warcraft", "trinitycore", "patcher", "binary"]
 categories = ["command-line-utilities", "game-development"]
 
 [dependencies]
-# Command-line interface
-clap = { version = "4.5", features = ["derive", "cargo", "env"] }
-
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -28,9 +25,21 @@ regex = "1.11"  # For version pattern matching in binaries
 # Platform detection
 cfg-if = "1.0"
 
-# Logging
-env_logger = "0.11"
-log = "0.4"
+# Optional: Command-line interface (only needed for CLI binary)
+clap = { version = "4.5", features = ["derive", "cargo", "env"], optional = true }
+
+# Optional: Logging (only needed for CLI binary)
+env_logger = { version = "0.11", optional = true }
+log = { version = "0.4", optional = true }
+
+[features]
+default = ["cli"]
+cli = ["clap", "env_logger", "log"]
+
+[[bin]]
+name = "wow-patcher"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [build-dependencies]
 chrono = "0.4"
