@@ -196,7 +196,7 @@ The patcher automatically detects the client type (Retail vs Classic Era) and ap
 
 ### Prerequisites
 
-- Rust 1.86.0 or higher
+- Rust 1.92.0 or higher
 - Cargo (included with Rust)
 
 ### Development
@@ -207,9 +207,6 @@ cargo run -- -l /path/to/Wow.exe
 
 # Run tests
 cargo test
-
-# Run with logging
-RUST_LOG=debug cargo run -- -l /path/to/Wow.exe
 
 # Format code
 cargo fmt
