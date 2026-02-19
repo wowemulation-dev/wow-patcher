@@ -1,0 +1,12 @@
+# Unified mise configuration for WoW Emulation Rust projects
+# https://mise.jdx.dev/configuration.html
+
+[tools]
+rust = "1.92"
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
+mdbook = "latest"
+"npm:markdownlint-cli2" = "latest"
+actionlint = "latest"
+"cargo:cargo-deny" = "latest"
+"cargo:cross" = "latest"
