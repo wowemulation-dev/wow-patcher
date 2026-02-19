@@ -2,7 +2,7 @@
 name = "wow-patcher"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.92"
 authors = ["Daniel S. Reichenbach <daniel@kogit.network>"]
 description = "World of Warcraft client patcher for TrinityCore private servers"
 repository = "https://github.com/wowemulation-dev/wow-patcher"
@@ -11,30 +11,17 @@ keywords = ["wow", "warcraft", "trinitycore", "patcher", "binary"]
 categories = ["command-line-utilities", "game-development"]
 
 [dependencies]
-# Error handling
-anyhow = "1.0"
-thiserror = "1.0"
-
 # Binary manipulation
-byteorder = "1.5"
-memchr = "2.7"
 hex = "0.4"
-goblin = "0.8"  # PE/Mach-O/ELF parsing for version extraction and code signing
-regex = "1.11"  # For version pattern matching in binaries
-
-# Platform detection
-cfg-if = "1.0"
+goblin = "0.10"  # PE/Mach-O/ELF parsing for version extraction and code signing
+regex = "1.12"   # For version pattern matching in binaries
 
 # Optional: Command-line interface (only needed for CLI binary)
 clap = { version = "4.5", features = ["derive", "cargo", "env"], optional = true }
 
-# Optional: Logging (only needed for CLI binary)
-env_logger = { version = "0.11", optional = true }
-log = { version = "0.4", optional = true }
-
 [features]
 default = ["cli"]
-cli = ["clap", "env_logger", "log"]
+cli = ["clap"]
 
 [[bin]]
 name = "wow-patcher"
@@ -45,11 +32,7 @@ required-features = ["cli"]
 chrono = "0.4"
 
 [dev-dependencies]
-# Testing
-tempfile = "3.8"
-assert_cmd = "2.0"
-predicates = "3.0"
-pretty_assertions = "1.4"
+tempfile = "3.24"
 
 [profile.release]
 lto = true

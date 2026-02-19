@@ -250,7 +250,7 @@ impl Patcher {
     ///
     /// # Arguments
     ///
-    /// * `cdn_url` - Base URL for the CDN (e.g., "http://my-cdn.local")
+    /// * `cdn_url` - Base URL for the CDN (e.g., `http://my-cdn.local`)
     ///
     /// # Examples
     ///

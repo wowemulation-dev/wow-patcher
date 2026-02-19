@@ -113,10 +113,10 @@ pub fn execute_patch(
     }
 
     // Check Ed25519 pattern (only for clients that use it)
-    if client_type.uses_ed25519() {
-        if let Some(offset) = data.find_pattern(crypto_ed_public_key_pattern()) {
-            offsets_to_validate.push((offset, "Ed25519 Public Key"));
-        }
+    if client_type.uses_ed25519()
+        && let Some(offset) = data.find_pattern(crypto_ed_public_key_pattern())
+    {
+        offsets_to_validate.push((offset, "Ed25519 Public Key"));
     }
 
     // Check version URL patterns (v1, v2, and v3)
@@ -634,14 +634,15 @@ pub fn execute_patch(
     }
 
     // Remove code signing on macOS
-    if strip_codesign && cfg!(target_os = "macos") {
-        if let Err(e) = remove_codesigning_signature(output_path.to_str().unwrap_or("")) {
-            return Err(WowPatcherError::wrap(
-                ErrorCategory::PlatformError,
-                "Failed to remove code signing",
-                e,
-            ));
-        }
+    if strip_codesign
+        && cfg!(target_os = "macos")
+        && let Err(e) = remove_codesigning_signature(output_path.to_str().unwrap_or(""))
+    {
+        return Err(WowPatcherError::wrap(
+            ErrorCategory::PlatformError,
+            "Failed to remove code signing",
+            e,
+        ));
     }
 
     println!(
