@@ -6,6 +6,9 @@ to connect to TrinityCore-based private servers.
 <div align="center">
 
 [![Discord](https://img.shields.io/discord/1394228766414471219?logo=discord&style=flat-square)](https://discord.gg/Q44pPMvGEd)
+[![Sponsor](https://img.shields.io/github/sponsors/wowemulation-dev?logo=github&style=flat-square)](https://github.com/sponsors/wowemulation-dev)
+[![CI Status](https://github.com/wowemulation-dev/wow-patcher/workflows/CI/badge.svg)](https://github.com/wowemulation-dev/wow-patcher/actions)
+[![Rust Version](https://img.shields.io/badge/rust-1.92+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE-APACHE)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 
@@ -227,6 +230,16 @@ cargo doc --open
 **Q: Do I need to remove code signing on macOS?**
 
 **A:** Yes, the patched executable needs code signing removed to run on macOS. This is enabled by default.
+
+**Q: macOS shows a warning that the app is damaged or from an unidentified developer. How do I fix this?**
+
+**A:** macOS adds a quarantine attribute to downloaded files. Remove it by running:
+
+```bash
+xattr -dr com.apple.quarantine /path/to/wow-patcher
+```
+
+If you built from source this is not needed.
 
 **Q: Can I use this with any private server?**
 
