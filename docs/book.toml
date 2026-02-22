@@ -1,0 +1,16 @@
+[book]
+title = "wow-patcher"
+description = "World of Warcraft client patcher for TrinityCore private servers"
+authors = ["Daniel S. Reichenbach"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+git-repository-url = "https://github.com/wowemulation-dev/wow-patcher"
+edit-url-template = "https://github.com/wowemulation-dev/wow-patcher/edit/main/docs/{path}"
