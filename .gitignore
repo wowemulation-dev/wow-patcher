@@ -5,15 +5,5 @@
 !.gitignore
 !.gitattributes
 
-# Project files
-/.cache/
-/.fleet/
-/.idea/
-/.vscode/
-
-# OS specific temporary files
-.DS_Store
-Thumbs.db
-
 # Added by cargo
-/target/
+/target
