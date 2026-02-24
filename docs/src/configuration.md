@@ -70,15 +70,17 @@ CLI accepts keys from files:
 
 ```bash
 wow-patcher -l Wow.exe \
-  --rsa-key /path/to/rsa.key \
-  --ed25519-key /path/to/ed25519.key
+  --rsa-file /path/to/rsa.key \
+  --ed25519-file /path/to/ed25519.key
 ```
 
-Library accepts keys from:
+Library accepts keys via `Patcher` builder methods:
 
-- Bytes: `KeyConfig::new(rsa, ed25519)`
-- Hex strings: `KeyConfig::from_hex(rsa_hex, ed25519_hex)`
-- Files: `KeyConfig::from_files(rsa_path, ed25519_path)`
+- Bytes: `.custom_keys(&rsa, &ed25519)?`
+- Hex strings: `.custom_keys_from_hex(rsa_hex, ed25519_hex)?`
+- Files: `.custom_keys_from_files(rsa_path, ed25519_path)?`
+
+`KeyConfig` is also available for direct key management via `KeyConfig::new()`, `KeyConfig::from_hex()`, and `KeyConfig::from_files()`.
 
 ## CDN URLs
 

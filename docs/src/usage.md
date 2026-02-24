@@ -20,8 +20,8 @@ wow-patcher -l /path/to/Wow.exe -o Wow-patched.exe
 
 | Argument | Description | Required | Default |
 |----------|-------------|-----------|----------|
-| `-l, --launcher` | Path to WoW executable | Yes | - |
-| `-o, --output` | Output file path | No | `{name}-patched.{ext}` |
+| `-l, --warcraft-exe` | Path to WoW executable | Yes (auto-detected on macOS) | - |
+| `-o, --output-file` | Output file path | No | `Arctium` |
 
 ## Optional Flags
 
@@ -29,7 +29,8 @@ wow-patcher -l /path/to/Wow.exe -o Wow-patched.exe
 |------|-------------|
 | `-h, --help` | Show help message |
 | `-v, --verbose` | Print detailed output |
-| `--dry-run` | Preview changes without writing |
+| `-n, --dry-run` | Preview changes without writing |
+| `-s, --strip-binary-codesign` | Remove macOS code signing (default: true) |
 
 ## Custom Keys
 
@@ -43,8 +44,16 @@ Load keys from files:
 
 ```bash
 wow-patcher -l Wow.exe -o Wow-patched.exe \
-  --rsa-key /path/to/rsa.key \
-  --ed25519-key /path/to/ed25519.key
+  --rsa-file /path/to/rsa.bin \
+  --ed25519-file /path/to/ed25519.bin
+```
+
+Load keys from hex strings:
+
+```bash
+wow-patcher -l Wow.exe -o Wow-patched.exe \
+  --rsa-hex "91D59BB7D4E183A5..." \
+  --ed25519-hex "15D618BD7DB577BD..."
 ```
 
 ## Custom CDN
@@ -59,10 +68,12 @@ wow-patcher -l Wow.exe -o Wow-patched.exe \
 
 ## macOS Code Signing
 
-The patcher preserves macOS code signatures. To remove them (needed for running patched binaries):
+The CLI strips macOS code signatures by default (`--strip-binary-codesign` defaults to `true`). This is required for patched binaries to run on macOS.
+
+To keep the code signature (not recommended):
 
 ```bash
-codesign --remove-signature Wow-patched.exe
+wow-patcher -l Wow.exe -s=false
 ```
 
 ## Dry Run

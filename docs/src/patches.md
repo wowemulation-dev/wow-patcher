@@ -77,7 +77,7 @@ The patcher verifies that all patterns are found in patchable sections of the bi
 | Binary Format | Patchable Sections |
 |---------------|--------------------|
 | PE (Windows) | `.rdata`, `.data` |
-| Mach-O (macOS) | `__DATA`, `__DATA_CONST` |
+| Mach-O (macOS) | `__DATA`, `__DATA_CONST`, `__TEXT.__const` |
 | ELF (Linux) | `.data` |
 
 Patterns found in code sections (`.text`, `__TEXT`) are rejected. This prevents accidental code modification.

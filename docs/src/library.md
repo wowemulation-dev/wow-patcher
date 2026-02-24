@@ -51,43 +51,33 @@ Patcher::new("Wow.exe")
 #### Custom Keys from Bytes
 
 ```rust
-use wow_patcher::KeyConfig;
-
 let rsa_key: Vec<u8> = /* 256 bytes */;
 let ed25519_key: Vec<u8> = /* 32 bytes */;
 
 Patcher::new("Wow.exe")
-    .custom_keys(KeyConfig::new(rsa_key, ed25519_key))
+    .custom_keys(&rsa_key, &ed25519_key)?
     .patch()?;
 ```
 
 #### Custom Keys from Hex
 
 ```rust
-use wow_patcher::KeyConfig;
-
-let config = KeyConfig::from_hex(
-    "AA00BB11...",  // RSA (512 hex chars = 256 bytes)
-    "CC22DD33...",  // Ed25519 (64 hex chars = 32 bytes)
-)?;
-
 Patcher::new("Wow.exe")
-    .custom_keys(config)
+    .custom_keys_from_hex(
+        "AA00BB11...",  // RSA (512 hex chars = 256 bytes)
+        "CC22DD33...",  // Ed25519 (64 hex chars = 32 bytes)
+    )?
     .patch()?;
 ```
 
 #### Custom Keys from Files
 
 ```rust
-use wow_patcher::KeyConfig;
-
-let config = KeyConfig::from_files(
-    "/path/to/rsa.key",
-    "/path/to/ed25519.key",
-)?;
-
 Patcher::new("Wow.exe")
-    .custom_keys(config)
+    .custom_keys_from_files(
+        "/path/to/rsa.bin",
+        "/path/to/ed25519.bin",
+    )?
     .patch()?;
 ```
 
