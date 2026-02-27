@@ -1,0 +1,75 @@
+name: Client Support
+description: Report issues with a specific WoW client version or platform
+title: "[Client]: "
+labels: ["client-support", "needs-triage"]
+body:
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues to ensure this isn't a duplicate
+          required: true
+
+  - type: input
+    id: wow-version
+    attributes:
+      label: WoW Client Version
+      description: The exact WoW build being patched
+      placeholder: "e.g., 3.3.5a (12340), 1.12.1 (5875)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Client platform
+      options:
+        - Windows x86
+        - Windows x64
+        - macOS x86_64
+        - macOS ARM64
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the client support issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen after patching
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: patch-output
+    attributes:
+      label: Patcher Output
+      description: Output from the patcher tool
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+    validations:
+      required: false
