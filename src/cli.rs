@@ -86,6 +86,21 @@ pub enum Commands {
         #[arg(short = 'd', long = "detailed")]
         detailed: bool,
     },
+    /// Dump decrypted .text section from Arxan-protected client (Windows/Wine only)
+    ///
+    /// Launches the WoW client suspended, waits for Arxan TransformIT to
+    /// decrypt the .text section, then reads decrypted bytes from process
+    /// memory and saves to a raw binary file. The dump can be loaded into
+    /// Binary Ninja to replace the encrypted .text section.
+    DumpText {
+        /// Output file for the raw .text dump
+        #[arg(short = 'o', long, default_value = "text_dump.bin")]
+        output: String,
+
+        /// Seconds to wait for Arxan decryption (0 = auto-detect)
+        #[arg(short = 'w', long, default_value_t = 0)]
+        wait: u64,
+    },
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -99,6 +114,28 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", crate::version::info());
             }
             Ok(())
+        }
+        Some(Commands::DumpText { output, wait }) => {
+            let location = cli
+                .location
+                .unwrap_or_else(crate::platform::find_warcraft_client_executable);
+
+            if location.is_empty() {
+                return Err(
+                    "No WoW executable specified. Use -l flag to specify the path.".into(),
+                );
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                crate::cmd::dump::win::dump_text_section(&location, &output, wait, cli.verbose)?;
+                return Ok(());
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (&location, &output);
+                return Err("dump-text requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into());
+            }
         }
         None => {
             // Default behavior - patch the file

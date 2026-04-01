@@ -19,6 +19,16 @@ regex = "1.12"   # For version pattern matching in binaries
 # Optional: Command-line interface (only needed for CLI binary)
 clap = { version = "4.5", features = ["derive", "cargo", "env"], optional = true }
 
+# Windows process APIs for dump-text command (Arxan decrypted .text extraction)
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Memory",
+] }
+
 [features]
 default = ["cli"]
 cli = ["clap"]
