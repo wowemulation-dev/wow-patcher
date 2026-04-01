@@ -41,8 +41,11 @@ pub enum ClientType {
 impl ClientType {
     pub fn uses_ed25519(&self) -> bool {
         match self {
-            ClientType::Retail | ClientType::Classic | ClientType::Unknown => true,
-            ClientType::ClassicEra => false,
+            ClientType::Retail | ClientType::Unknown => true,
+            // Classic (1.13.x, 2.5.x, 3.4.x) and Classic Era do not embed
+            // an Ed25519 public key. Verified via RE of Classic 1.13.2.31650:
+            // the pattern (15 D6 18 BD...) is absent from the binary.
+            ClientType::Classic | ClientType::ClassicEra => false,
         }
     }
 }
@@ -243,7 +246,7 @@ mod tests {
     #[test]
     fn test_client_type_uses_ed25519() {
         assert!(ClientType::Retail.uses_ed25519());
-        assert!(ClientType::Classic.uses_ed25519());
+        assert!(!ClientType::Classic.uses_ed25519());
         assert!(!ClientType::ClassicEra.uses_ed25519());
         assert!(ClientType::Unknown.uses_ed25519());
     }
