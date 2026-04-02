@@ -1,0 +1,18 @@
+# Cargo configuration for wow-patcher
+# https://doc.rust-lang.org/cargo/reference/config.html
+
+[build]
+# Note: Enable "-D warnings" once port is stabilized
+# rustflags = ["-D", "warnings"]
+# rustdocflags = ["-D", "warnings"]
+
+# Use all available CPU cores for parallel compilation
+jobs = -1
+
+[term]
+# Always show colors in terminal output
+color = "always"
+
+[env]
+# Enable backtraces for better error messages during development
+RUST_BACKTRACE = "1"

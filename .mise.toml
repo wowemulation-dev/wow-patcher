@@ -3,7 +3,7 @@
 
 [tools]
 # ── Toolchain ──────────────────────────────────
-rust = "1.92"
+rust = "stable"
 node = "22"
 
 # ── Build tools ────────────────────────────────
@@ -21,7 +21,7 @@ node = "22"
 actionlint = "latest"
 
 # ── Documentation ─────────────────────────────
-mdbook = "latest"
+"cargo:mdbook" = "latest"
 "cargo:mdbook-mermaid" = "latest"
 
 # ── Profiling ─────────────────────────────────
