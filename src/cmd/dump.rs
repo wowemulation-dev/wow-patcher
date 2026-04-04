@@ -28,9 +28,50 @@ pub mod win {
         fn NtSuspendProcess(process_handle: HANDLE) -> i32;
     }
 
-    /// Known .text section bounds for WoW Classic 1.13.2.31650
-    const TEXT_START_RVA: u64 = 0x1000;
-    const TEXT_SIZE: usize = 28_812_790; // 0x141b7b5f6 - 0x140001000
+    /// Parse .text section RVA and virtual size from PE headers on disk.
+    fn read_text_section_info(
+        exe_path: &str,
+    ) -> Result<(u64, usize), Box<dyn std::error::Error>> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut f = std::fs::File::open(exe_path)?;
+
+        // DOS header: e_lfanew at offset 0x3C
+        f.seek(SeekFrom::Start(0x3C))?;
+        let mut buf4 = [0u8; 4];
+        f.read_exact(&mut buf4)?;
+        let pe_offset = u32::from_le_bytes(buf4) as u64;
+
+        // PE signature (4) + COFF header (20)
+        f.seek(SeekFrom::Start(pe_offset + 4))?;
+        let mut coff = [0u8; 20];
+        f.read_exact(&mut coff)?;
+        let num_sections = u16::from_le_bytes([coff[2], coff[3]]);
+        let opt_header_size = u16::from_le_bytes([coff[16], coff[17]]);
+
+        // Skip optional header to reach section headers
+        let sections_offset = pe_offset + 4 + 20 + opt_header_size as u64;
+        f.seek(SeekFrom::Start(sections_offset))?;
+
+        for _ in 0..num_sections {
+            let mut section = [0u8; 40];
+            f.read_exact(&mut section)?;
+            let name = std::str::from_utf8(&section[..8])
+                .unwrap_or("")
+                .trim_end_matches('\0');
+            if name == ".text" {
+                let virtual_size = u32::from_le_bytes([
+                    section[8], section[9], section[10], section[11],
+                ]) as usize;
+                let virtual_address = u32::from_le_bytes([
+                    section[12], section[13], section[14], section[15],
+                ]) as u64;
+                return Ok((virtual_address, virtual_size));
+            }
+        }
+
+        Err("No .text section found in PE headers".into())
+    }
 
     /// Launch Wow.exe suspended, wait for Arxan to decrypt, dump .text section.
     pub fn dump_text_section(
@@ -39,6 +80,17 @@ pub mod win {
         wait_seconds: u64,
         verbose: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Read .text section info from PE headers
+        let (text_start_rva, text_size) = read_text_section_info(exe_path)?;
+        if verbose {
+            println!(
+                ".text section: RVA 0x{:X}, size {} bytes ({:.1} MB)",
+                text_start_rva,
+                text_size,
+                text_size as f64 / 1_048_576.0
+            );
+        }
+
         let exe_cstr = CString::new(exe_path)?;
         let work_dir = Path::new(exe_path)
             .parent()
@@ -104,7 +156,7 @@ pub mod win {
         }
 
         // Step 4: Wait for Arxan to finish decrypting
-        let text_base = base_address + TEXT_START_RVA as usize;
+        let text_base = base_address + text_start_rva as usize;
 
         if wait_seconds > 0 {
             // Timer-based: wait a fixed duration for Arxan to complete
@@ -129,12 +181,12 @@ pub mod win {
             println!(
                 "Reading .text section: 0x{:X} ({} bytes / {:.1} MB)",
                 text_base,
-                TEXT_SIZE,
-                TEXT_SIZE as f64 / 1_048_576.0
+                text_size,
+                text_size as f64 / 1_048_576.0
             );
         }
 
-        let mut buffer = vec![0u8; TEXT_SIZE];
+        let mut buffer = vec![0u8; text_size];
         let mut bytes_read: usize = 0;
 
         let read_ok = unsafe {
@@ -142,7 +194,7 @@ pub mod win {
                 process_handle,
                 text_base as *const _,
                 buffer.as_mut_ptr() as *mut _,
-                TEXT_SIZE,
+                text_size,
                 &mut bytes_read,
             )
         };
