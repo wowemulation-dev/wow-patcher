@@ -91,7 +91,7 @@ pub enum Commands {
     /// Launches the WoW client suspended, waits for Arxan TransformIT to
     /// decrypt the .text section, then reads decrypted bytes from process
     /// memory and saves to a raw binary file. The dump can be loaded into
-    /// Binary Ninja to replace the encrypted .text section.
+    /// a disassembler to replace the encrypted .text section.
     DumpText {
         /// Output file for the raw .text dump
         #[arg(short = 'o', long, default_value = "text_dump.bin")]
@@ -100,6 +100,33 @@ pub enum Commands {
         /// Seconds to wait for Arxan decryption (0 = auto-detect)
         #[arg(short = 'w', long, default_value_t = 0)]
         wait: u64,
+    },
+
+    /// Dump one or more PE sections from a running Arxan-protected client.
+    ///
+    /// Extends dump-text to arbitrary sections (.text, .data, .rdata, .pdata).
+    /// Useful for recovering runtime-populated data like opcode handler
+    /// tables, Aurora service dispatch tables, and Arxan-resolved IAT
+    /// function pointers that live in .data and are zeroed in the static PE.
+    ///
+    /// For .data recovery, use --post-decrypt-wait to let C++ static
+    /// initializers and the Arxan bootstrap finish populating globals
+    /// before the snapshot.
+    DumpSections {
+        /// Sections to dump, as comma-separated pairs `section:output_path`.
+        /// Example: `--targets .text:text.bin,.data:data.bin`
+        #[arg(short = 't', long, value_name = "TARGETS")]
+        targets: String,
+
+        /// Seconds to wait for Arxan decryption (0 = auto-detect)
+        #[arg(short = 'w', long, default_value_t = 0)]
+        wait: u64,
+
+        /// Additional seconds to wait after decryption completes, to let
+        /// C++ static init and startup code populate .data. Recommended
+        /// value for .data dumps: 10-30 seconds.
+        #[arg(long = "post-decrypt-wait", default_value_t = 0)]
+        post_decrypt_wait: u64,
     },
 }
 
@@ -115,26 +142,70 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(())
         }
-        Some(Commands::DumpText { output, wait }) => {
+        Some(Commands::DumpText { output, wait: _ }) => {
             let location = cli
                 .location
                 .unwrap_or_else(crate::platform::find_warcraft_client_executable);
 
             if location.is_empty() {
-                return Err(
-                    "No WoW executable specified. Use -l flag to specify the path.".into(),
-                );
+                return Err("No WoW executable specified. Use -l flag to specify the path.".into());
             }
 
             #[cfg(target_os = "windows")]
             {
-                crate::cmd::dump::win::dump_text_section(&location, &output, wait, cli.verbose)?;
+                crate::cmd::dump::win::dump_text_section(&location, &output, 0, cli.verbose)?;
                 return Ok(());
             }
             #[cfg(not(target_os = "windows"))]
             {
                 let _ = (&location, &output);
-                return Err("dump-text requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into());
+                Err("dump-text requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
+            }
+        }
+        Some(Commands::DumpSections {
+            targets,
+            wait,
+            post_decrypt_wait,
+        }) => {
+            let location = cli
+                .location
+                .unwrap_or_else(crate::platform::find_warcraft_client_executable);
+
+            if location.is_empty() {
+                return Err("No WoW executable specified. Use -l flag to specify the path.".into());
+            }
+
+            // Parse `name:path,name:path` into (name, path) pairs
+            let parsed: Result<Vec<(String, String)>, String> = targets
+                .split(',')
+                .map(|entry| {
+                    let (name, path) = entry.split_once(':').ok_or_else(|| {
+                        format!("Bad --targets entry '{entry}': expected 'section:path'")
+                    })?;
+                    Ok((name.trim().to_string(), path.trim().to_string()))
+                })
+                .collect();
+            let parsed = parsed?;
+
+            if parsed.is_empty() {
+                return Err("--targets must specify at least one section:path pair".into());
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                crate::cmd::dump::win::dump_sections(
+                    &location,
+                    &parsed,
+                    wait,
+                    post_decrypt_wait,
+                    cli.verbose,
+                )?;
+                return Ok(());
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (&location, &parsed, wait, post_decrypt_wait);
+                Err("dump-sections requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
             }
         }
         None => {
