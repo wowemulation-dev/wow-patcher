@@ -3,6 +3,12 @@ use crate::binary::PatternExt;
 use crate::binary::{Pattern, string_to_pattern};
 use std::sync::OnceLock;
 
+/// Runtime-mode patterns used by the `launch` subcommand. These
+/// share names with the static patterns above when the same byte
+/// sequence is targeted from both modes; access them via
+/// `crate::patterns::runtime::*`.
+pub mod runtime;
+
 pub static PORTAL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CONNECT_TO_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static SIGNATURE_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
