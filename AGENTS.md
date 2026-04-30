@@ -246,19 +246,6 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 
 ## Known Issues
 
-### Critical: RSA and Ed25519 Key Replacement Truncation
-
-`binary::patch()` at `src/binary/mod.rs:57` writes `min(replace.len(), find.len())` bytes.
-
-- RSA pattern is 8 bytes but replacement key is 256 bytes → only first 8 bytes written.
-- Ed25519 pattern is 8 bytes but replacement key is 32 bytes → only first 8 bytes written.
-
-The integration test (`test_patching_with_real_patterns`) masks this by only checking the first 8 bytes.
-
-Cryptographic key replacement does not work correctly. The `patch()` function should write all `replace.len()` bytes starting at the found position, not truncate to the pattern length.
-
-Portal and URL patches are not affected because their replacements are sized to match their pattern lengths.
-
 ### Certificate Bundle Pattern Unused
 
 `cert_bundle_pattern()` is defined in `src/patterns/mod.rs` but is never called from `execute_patch()`. Certificate bundle replacement is not implemented.
@@ -280,8 +267,8 @@ Portal and URL patches are not affected because their replacements are sized to 
 ## Implemented Features
 
 1. Portal pattern: `.actual.battle.net` replacement with null bytes.
-2. Three RSA modulus patterns: ConnectTo, Signature, and Crypto (with fallback chain). Replacement truncated to 8 bytes due to bug above.
-3. Ed25519 public key pattern: Crypto Ed25519 pattern. Replacement truncated to 8 bytes due to bug above.
+2. Three RSA modulus patterns: ConnectTo, Signature, and Crypto (with fallback chain). Full 256-byte replacement.
+3. Ed25519 public key pattern: Crypto Ed25519 pattern. Full 32-byte replacement.
 4. Version URL patching: three URL patterns (v1 HTTP, v2 HTTPS, v3 unified API) with Arctium CDN defaults.
 5. CDNs URL patching: HTTP CDN pattern with Arctium CDN default.
 6. macOS code signing removal via `codesign --remove-signature`.
@@ -354,7 +341,7 @@ When adding features:
 | `platform/{darwin,linux,windows}.rs` | 3 (platform-specific)                         |
 | `tests/integration_test.rs`          | 3 (full workflow, real patterns, errors)      |
 
-The integration test `test_patching_with_real_patterns` only verifies the first 8 bytes of RSA/Ed25519 replacements, masking the truncation bug.
+The integration test `test_patching_with_real_patterns` verifies the full 256-byte RSA modulus and 32-byte Ed25519 replacements landed correctly. Three regression tests in `binary::tests` (`test_patch_replacement_longer_than_pattern_writes_full_replacement`, `test_patch_ed25519_size_replacement`, `test_patch_replacement_past_end_is_error`) cover the corner cases of the fix.
 
 ## Features Not Implemented
 

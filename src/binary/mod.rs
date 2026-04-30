@@ -35,6 +35,30 @@ impl DataExt for [u8] {
     }
 }
 
+/// Locate `find` in `data` and overwrite starting at the match.
+///
+/// Writes `replace.len()` bytes into `data` starting at the matched
+/// position. The match is located via `find_pattern`, which honors
+/// `-1` wildcards in `find`.
+///
+/// # Replacement length semantics
+///
+/// - If `replace.len() <= find.len()`: writes `replace.len()` bytes;
+///   any trailing bytes of the matched pattern remain unchanged.
+/// - If `replace.len() > find.len()`: writes all `replace.len()`
+///   bytes, overwriting `replace.len() - find.len()` bytes past the
+///   end of the matched pattern. This is the intended behaviour for
+///   key replacement, where the find pattern is an 8-byte prefix
+///   anchor and the replacement is the full key (256 bytes for RSA,
+///   32 bytes for Ed25519).
+///
+/// # Errors
+///
+/// - `data` is empty.
+/// - `find` is longer than `data`.
+/// - `find` is not present in `data`.
+/// - `replace.len()` is longer than the bytes available from the
+///   match position to the end of `data`.
 pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowPatcherError> {
     if data.is_empty() {
         return Err(WowPatcherError::new(
@@ -50,19 +74,28 @@ pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowP
         ));
     }
 
-    let position = find_pattern(data, find);
-
-    match position {
-        Some(pos) => {
-            let replace_len = replace.len().min(find.len());
-            data[pos..(replace_len + pos)].copy_from_slice(&replace[..replace_len]);
-            Ok(())
-        }
-        None => Err(WowPatcherError::new(
+    let Some(pos) = find_pattern(data, find) else {
+        return Err(WowPatcherError::new(
             ErrorCategory::PatchingError,
             "pattern not found in data",
-        )),
+        ));
+    };
+
+    let end = pos.checked_add(replace.len()).ok_or_else(|| {
+        WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "replacement length overflows usize when added to match position",
+        )
+    })?;
+    if end > data.len() {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "replacement extends past the end of data",
+        ));
     }
+
+    data[pos..end].copy_from_slice(replace);
+    Ok(())
 }
 
 fn find_pattern(data: &[u8], pattern: &Pattern) -> Option<usize> {
@@ -225,5 +258,76 @@ mod tests {
         let result = patch(&mut data, &find, &replace);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 2, 3]);
+    }
+
+    /// Regression test for the RSA / Ed25519 key truncation bug.
+    ///
+    /// The find pattern is the 8-byte prefix anchor of a Battle.net
+    /// RSA modulus, but the replacement is the full 256-byte modulus.
+    /// Before the fix, only the first 8 bytes of the replacement
+    /// were copied. After the fix, all 256 bytes are written,
+    /// overwriting the 248 bytes that follow the matched pattern.
+    #[test]
+    fn test_patch_replacement_longer_than_pattern_writes_full_replacement() {
+        // Layout: 16 bytes of leading filler, the 8-byte stock
+        // ConnectTo modulus prefix, 248 more bytes of filler -- total
+        // 272 bytes. After patching, the 256 bytes starting at
+        // offset 16 should equal the replacement; the leading 16
+        // bytes are untouched.
+        let mut data = vec![0xCC; 16];
+        data.extend_from_slice(&[0x91, 0xD5, 0x9B, 0xB7, 0xD4, 0xE1, 0x83, 0xA5]);
+        data.extend_from_slice(&[0xDE; 248]);
+        assert_eq!(data.len(), 272);
+
+        let find = vec![0x91, 0xD5, 0x9B, 0xB7, 0xD4, 0xE1, 0x83, 0xA5];
+        let replace: Vec<u8> = (0..=255).collect(); // 256 distinct bytes
+
+        patch(&mut data, &find, &replace).unwrap();
+
+        // Leading filler unchanged.
+        assert!(data[..16].iter().all(|&b| b == 0xCC));
+        // The full 256-byte replacement landed.
+        assert_eq!(&data[16..272], replace.as_slice());
+    }
+
+    /// Companion test for Ed25519 (32-byte replacement, 8-byte
+    /// pattern). Same root cause as the RSA case but exercises a
+    /// shorter excess.
+    #[test]
+    fn test_patch_ed25519_size_replacement() {
+        let mut data = vec![0xCC; 8];
+        data.extend_from_slice(&[0x15, 0xD6, 0x18, 0xBD, 0x7D, 0xB5, 0x77, 0xBD]);
+        data.extend_from_slice(&[0xDE; 32]);
+        assert_eq!(data.len(), 48);
+
+        let find = vec![0x15, 0xD6, 0x18, 0xBD, 0x7D, 0xB5, 0x77, 0xBD];
+        let replace: Vec<u8> = (0u8..32).collect();
+
+        patch(&mut data, &find, &replace).unwrap();
+
+        assert!(data[..8].iter().all(|&b| b == 0xCC));
+        assert_eq!(&data[8..40], replace.as_slice());
+        assert!(data[40..].iter().all(|&b| b == 0xDE));
+    }
+
+    /// The replacement may extend past the end of `data`. In that
+    /// case we should report an error rather than silently truncate
+    /// or panic.
+    #[test]
+    fn test_patch_replacement_past_end_is_error() {
+        // Pattern lives at the very end of data; a 4-byte
+        // replacement against a 2-byte pattern would write 2 bytes
+        // past the end.
+        let mut data = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let find = vec![0xCC, 0xDD]; // matches at offset 2
+        let replace = vec![0x11, 0x22, 0x33, 0x44];
+
+        let result = patch(&mut data, &find, &replace);
+        assert!(
+            result.is_err(),
+            "should error rather than silently truncate or panic"
+        );
+        // Data should be unchanged on error.
+        assert_eq!(data, vec![0xAA, 0xBB, 0xCC, 0xDD]);
     }
 }

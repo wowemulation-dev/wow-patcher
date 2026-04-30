@@ -8,11 +8,7 @@ use wow_patcher::trinity::{CRYPTO_ED25519_PUBLIC_KEY, RSA_MODULUS};
 
 fn create_mock_executable() -> Vec<u8> {
     let size = 100 * 1024;
-    let mut data = vec![0u8; size];
-
-    for i in 0..size {
-        data[i] = (i % 256) as u8;
-    }
+    let mut data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
 
     // Insert portal pattern at offset 1000
     let portal_str = b".actual.battle.net";
@@ -94,24 +90,32 @@ fn test_patching_with_real_patterns() {
     );
     assert!(result.is_ok());
 
-    // Verify patches were applied
-    // Check portal pattern was zeroed
-    for i in 0..portal_str.len() {
-        assert_eq!(data[portal_offset + i], 0);
-    }
+    // Verify patches were applied.
 
-    // Check RSA pattern was replaced
-    let rsa_replaced_len = RSA_MODULUS.len().min(rsa_pattern.len());
+    // Portal pattern was zeroed.
     assert_eq!(
-        &data[rsa_offset..rsa_offset + rsa_replaced_len],
-        &RSA_MODULUS[..rsa_replaced_len]
+        &data[portal_offset..portal_offset + portal_str.len()],
+        &vec![0u8; portal_str.len()][..]
     );
 
-    // Check Ed25519 pattern was replaced
-    let ed_replaced_len = CRYPTO_ED25519_PUBLIC_KEY.len().min(ed_pattern.len());
+    // RSA pattern was replaced with the FULL 256-byte modulus, not
+    // just the first 8 bytes (regression test for the truncation bug
+    // tracked in AGENTS.md "Critical: RSA and Ed25519 Key Replacement
+    // Truncation"). The replacement extends past the end of the 8-byte
+    // anchor pattern, overwriting 248 bytes of trailing buffer.
+    assert_eq!(RSA_MODULUS.len(), 256);
     assert_eq!(
-        &data[ed_offset..ed_offset + ed_replaced_len],
-        &CRYPTO_ED25519_PUBLIC_KEY[..ed_replaced_len]
+        &data[rsa_offset..rsa_offset + RSA_MODULUS.len()],
+        RSA_MODULUS,
+        "full RSA modulus must be written, not truncated to pattern length"
+    );
+
+    // Ed25519 pattern was replaced with the FULL 32-byte key.
+    assert_eq!(CRYPTO_ED25519_PUBLIC_KEY.len(), 32);
+    assert_eq!(
+        &data[ed_offset..ed_offset + CRYPTO_ED25519_PUBLIC_KEY.len()],
+        CRYPTO_ED25519_PUBLIC_KEY,
+        "full Ed25519 public key must be written, not truncated to pattern length"
     );
 }
 
