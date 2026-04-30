@@ -10,3 +10,8 @@
 
 # mdBook build output
 /docs/book/
+
+# Test artifacts
+/Arctium
+*.exe
+*.exe.bak
