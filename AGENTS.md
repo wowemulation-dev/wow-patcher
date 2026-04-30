@@ -349,20 +349,74 @@ The integration test `test_patching_with_real_patterns` verifies the full 256-by
 
 Pattern is defined but patching logic is not implemented. Arctium replaces the Blizzard certificate bundle (a ~30KB JSON structure starting with `{"Created":`) with a custom certificate bundle containing self-signed certificates.
 
-### Runtime-Only Features (planned for the `launch` subcommand)
+### Runtime-mode features (deferred; not on the critical path)
 
-Static binary patching cannot reach code in `.text` because Arxan encrypts it on disk. The reference implementation (Arctium WoW-Launcher) handles these via runtime patching after the Arxan TLS callback decrypts `.text` in memory. This crate's `launch` subcommand (in progress on `feat/runtime-patch-arctium`) ports the same approach:
+Empirical verification of Arctium's pattern catalogue against four
+WoW Classic builds (1.13.2.31650, 2.5.3.42328, 3.4.3.53788,
+4.4.2.60895) showed:
 
-- **Anti-tamper bypass**: patches integrity checks, certificate validation, and memory remap detection.
-- **Certificate bundle replacement**: rewrites the embedded `{"Created":...}` cert bundle in memory after Arxan decrypts the surrounding code paths.
-- **Certificate chain dev mode**: bypasses certificate chain validation for local/private IP connections so localhost servers can present non-Blizzard CAs.
-- **Public-key pinning bypass**: replaces the libcurl-style pinned-public-key check site so non-Blizzard leaf certs are accepted.
-- **Static auth seed** (planned, not yet started): injects assembly that derives a fixed auth seed from the RSA modulus location at runtime.
+- The four data-only Common patterns (Portal + 3 RSA moduli for
+  pre-Wrath; Portal + ConnectTo + Ed25519 for Wrath+) hit cleanly
+  in their applicable builds. These all sit in `.rdata`, which is
+  not Arxan-encrypted, so they are reachable via static patching.
+- The Windows-specific code patterns (`CertBundle`, `CertCommonName`,
+  `CertChain`, `Integrity`, `Remap`) do **not** match any of the
+  four Classic builds. Arctium's byte sequences are tuned for the
+  current retail compiler output; older Classic builds need their
+  own patterns derived per build.
+- The libcurl public-key-pinning check uses the stock RSA modulus
+  in `.rdata` as its source of truth. Replacing the modulus (now
+  correctly written end-to-end after the truncation fix in commit
+  `5363c0e`) defeats the pin check without touching code in `.text`.
+
+Conclusion: the static patcher, with the truncation bug fixed, is
+sufficient to redirect Classic clients onto custom servers. Runtime
+patching becomes valuable only when:
+
+- A future Classic build adds new integrity checks or anti-tamper
+  guards in `.text` that the static patcher cannot reach.
+- We need to bypass `VerifyServerCertificateWithBundle` directly
+  (e.g. to ship a leaf cert whose CA is not in the embedded bundle
+  AND whose modulus differs from the replaced stock modulus).
+- Mod-loading or DLL-injection features are added.
+
+Verification details and per-build pattern hit counts are recorded
+in the management repo's Serena memory `analysis/wow-patcher-pattern-verification`.
+
+The `feat/runtime-patch-arctium` branch contains the partially-built
+runtime infrastructure:
+
+- `src/patterns/runtime/{common,windows}.rs`: ported Arctium patterns
+  with 11 unit tests. These remain useful when runtime mode is
+  revived; the Common patterns are universal and the Windows ones
+  serve as retail-current defaults.
+- `src/binary/mod.rs`: truncation fix + 3 regression tests + bounds
+  check. **This is the load-bearing change** and is on the branch
+  even though the rest of the runtime work is deferred.
+- `AGENTS.md`: runtime-mode design notes; this section.
 
 Out of scope for this crate (would belong in a separate tool):
 
-- **Custom file loading (mod loader)**: hooks file-loading functions to redirect file IDs to custom paths.
-- **DLL injection**: loads Classic-DLL for CASC hooks and Lua restriction removal.
+- **Custom file loading (mod loader)**: hooks file-loading functions
+  to redirect file IDs to custom paths.
+- **DLL injection**: loads Classic-DLL for CASC hooks and Lua
+  restriction removal.
+
+#### When to revive the runtime work
+
+Three triggers:
+
+1. A specific Classic build cannot be bypassed via the static patcher
+   (manifests as login-portal connections being rejected at the TLS
+   layer despite all four Common data patches landing). At that
+   point, derive Windows code patterns per build using the existing
+   Ghidra databases for `Wow.exe` / `WowClassic.exe`.
+2. We need cert-chain dev-mode bypass (e.g., presenting a
+   different-CN leaf to satisfy the client's hostname matching).
+3. Mod-loading or auth-seed assembly injection becomes a goal.
+
+Until then: ship static patches only, verify via the per-build
+smoke-test framework in the management repo's PoC.
 
 ### Other Missing Features
 
