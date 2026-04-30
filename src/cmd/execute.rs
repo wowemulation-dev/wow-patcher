@@ -187,8 +187,14 @@ pub fn execute_patch(
         // Check each pattern
         let mut temp_data = data.clone();
 
-        if patch(&mut temp_data, portal_pattern(), &portal_pattern().empty()).is_ok() {
-            println!("  ✓ Portal pattern (.actual.battle.net → empty)");
+        if patch(
+            &mut temp_data,
+            portal_pattern(),
+            &portal_pattern().padded(b".localhost"),
+        )
+        .is_ok()
+        {
+            println!("  ✓ Portal pattern (.actual.battle.net → .localhost)");
         } else {
             println!("  ✗ Portal pattern not found");
         }
@@ -383,8 +389,19 @@ pub fn execute_patch(
         println!("Applying patches...");
     }
 
-    // Portal pattern
-    if let Err(e) = patch(&mut data, portal_pattern(), &portal_pattern().empty()) {
+    // Portal pattern: replace `.actual.battle.net` with `.localhost`
+    // (NUL-padded to 18 bytes). The 1.13.x client constructs the BGS
+    // portal URL via NUL-terminated string concat — `<region> +
+    // ".actual.battle.net" + "/path"`. Filling with all-NUL collapses
+    // the assembled URL at the embedded NUL and silently drops the
+    // path (manifests as `BLZ51901016 ERROR_NETWORK_MODULE_SOCKET_CLOSED`).
+    // `<region>.localhost` resolves to 127.0.0.1 via nss-myhostname
+    // (RFC 6761) on Linux without any /etc/hosts entry.
+    if let Err(e) = patch(
+        &mut data,
+        portal_pattern(),
+        &portal_pattern().padded(b".localhost"),
+    ) {
         if verbose {
             println!("  ✗ Portal pattern not found: {}", e);
         }
@@ -396,7 +413,7 @@ pub fn execute_patch(
     } else {
         patch_count += 1;
         if verbose {
-            println!("  ✓ Portal pattern patched");
+            println!("  ✓ Portal pattern patched (.actual.battle.net → .localhost)");
         }
     }
 

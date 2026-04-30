@@ -11,11 +11,37 @@ pub fn string_to_pattern(s: &str) -> Pattern {
 
 pub trait PatternExt {
     fn empty(&self) -> Vec<u8>;
+    fn padded(&self, target: &[u8]) -> Vec<u8>;
 }
 
 impl PatternExt for Pattern {
     fn empty(&self) -> Vec<u8> {
         vec![0; self.len()]
+    }
+
+    /// Build a length-preserving replacement: `target` followed by NUL
+    /// padding to match the pattern's length.
+    ///
+    /// Use this for hostname / URL fragments embedded in `.rdata` that
+    /// the client assembles at runtime via NUL-terminated string
+    /// concatenation. Replacing with all-NUL truncates the assembled
+    /// URL at the embedded NUL and silently drops the rest of the
+    /// concatenation. A target like `b".localhost"` for the
+    /// `.actual.battle.net` slot lets the runtime concat produce
+    /// `<region>.localhost`, which resolves to 127.0.0.1 via
+    /// `nss-myhostname` (RFC 6761) without needing /etc/hosts.
+    ///
+    /// Panics if `target.len() > self.len()`.
+    fn padded(&self, target: &[u8]) -> Vec<u8> {
+        assert!(
+            target.len() <= self.len(),
+            "padded replacement target ({} bytes) exceeds pattern length ({} bytes)",
+            target.len(),
+            self.len()
+        );
+        let mut out = vec![0u8; self.len()];
+        out[..target.len()].copy_from_slice(target);
+        out
     }
 }
 
@@ -141,6 +167,35 @@ mod tests {
 
         let pattern = vec![1, -1, 3, -1, 5];
         assert_eq!(pattern.empty(), vec![0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_pattern_padded_target_fits() {
+        // 18-byte pattern (.actual.battle.net) + 10-byte target (.localhost)
+        let pattern = string_to_pattern(".actual.battle.net");
+        let target = b".localhost";
+        let padded = pattern.padded(target);
+        assert_eq!(padded.len(), pattern.len(), "preserves pattern length");
+        assert_eq!(&padded[..target.len()], target, "starts with target");
+        assert!(
+            padded[target.len()..].iter().all(|&b| b == 0),
+            "tail is NUL-padded"
+        );
+    }
+
+    #[test]
+    fn test_pattern_padded_exact_fit() {
+        // Target same length as pattern: no NUL padding.
+        let pattern = string_to_pattern("abcdef");
+        let padded = pattern.padded(b"abcdef");
+        assert_eq!(padded, b"abcdef");
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds pattern length")]
+    fn test_pattern_padded_target_too_long() {
+        let pattern = string_to_pattern("short");
+        let _ = pattern.padded(b"way too long for the pattern");
     }
 
     #[test]

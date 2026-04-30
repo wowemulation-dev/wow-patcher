@@ -136,7 +136,7 @@ src/
 4. Section validation: Locates all pattern offsets and verifies each is in a patchable section (`.rdata`/`.data` for PE, `__DATA`/`__DATA_CONST` for Mach-O).
 5. Dry run: If enabled, prints preview of all patches and exits.
 6. Apply patches in order:
-   - Portal: mandatory, replaced with null bytes. Error if not found.
+   - Portal: mandatory, replaced with `.localhost` (NUL-padded to 18 bytes). Error if not found. See "Portal pattern NUL-collapse pitfall" below.
    - RSA modulus: mandatory, tries ConnectTo → Signature → Crypto pattern. Error if none found.
    - Ed25519: optional (depends on client type). Warning if not found.
    - Version URL: optional, tries v1 → v2 → v3 patterns. Warning if not found.
@@ -205,6 +205,54 @@ Custom `WowPatcherError` type with `ErrorCategory` enum.
 
 The CertBundle pattern is defined but never called from `execute_patch()`. Certificate bundle replacement is not implemented.
 
+## Portal pattern NUL-collapse pitfall
+
+The Portal pattern targets `.actual.battle.net` as 18 ASCII bytes in `.rdata`. The 1.13.x client constructs the BGS portal URL at runtime via NUL-terminated string concat:
+
+```
+"https://" + "<region>" + ".actual.battle.net" + "/client/login/external?targetRegion=<region>"
+```
+
+**Replacing `.actual.battle.net` with 18 NUL bytes (the obvious "empty fill") breaks this.** `strcat`/`strcpy`/`std::string::append` stop at the first NUL byte, so the assembled URL collapses to `https://<region>` — path silently dropped, DNS fails, the network module reports `ERROR_NETWORK_MODULE_SOCKET_CLOSED` (`BLZ51901016`) and the client shows the disconnect dialog before reaching auth.
+
+The fix in this crate replaces with `.localhost` (10 bytes) followed by 8 NUL bytes via `Pattern::padded(b".localhost")`. The runtime concat then produces `https://<region>.localhost/client/login/external?...`, where `<region>.localhost` resolves to `127.0.0.1` via `nss-myhostname` (RFC 6761) on Linux without needing `/etc/hosts` edits.
+
+Use `Pattern::padded(target)` instead of `Pattern::empty()` for any URL hostname / suffix replacement. The all-NUL form (`Pattern::empty()`) is appropriate only for fixed-length binary key replacements where the surrounding code reads the bytes via length-aware operations (the 256-byte RSA modulus replacement is one such case).
+
+For RE context (the BLZ error code decoding, the live-test trace that uncovered this pitfall, and the broader URL-construction conventions in the 1.13.2 client) see the management repo's Serena memories `analysis/wow-1132-portal-patch-nul-bug` and `analysis/wow-1132-client-url-catalog`.
+
+## Pre-login HTTP probes (scope expansion, not yet implemented)
+
+Live testing 2026-04-30 against an unmodified WoW Classic 1.13.2 client revealed that **the client makes blocking HTTP probes to legacy Blizzard endpoints before the BGS auth flow even begins**. Both endpoints accept TCP but never respond, so the in-game network module raises `ERROR_NETWORK_MODULE_SOCKET_CLOSED` (BLZ51901016) and the client surfaces "You have been disconnected" before the user can click Login.
+
+The two probes captured on the wire (HTTP/1.1 with `User-Agent: Blizzard Web Client`):
+
+| Hostname                            | Path        | Purpose                                  |
+| ----------------------------------- | ----------- | ---------------------------------------- |
+| `launcher.worldofwarcraft.com`      | `/alert`    | Maintenance / news alert banner          |
+| `support.worldofwarcraft.com`       | `/kb/`      | Support knowledge base reachability check |
+
+Regional siblings exist for both (`launcher.wow-europe.com`, `launcher.worldofwarcraft.co.kr`, `support.wow-europe.com`, `support.worldofwarcraft.co.kr`).
+
+Critical detail: **`/etc/hosts` redirects on the host alone do not fix this**. Wine's nss honors the hosts file (verified via `wine cmd /c "ping ..."`), but `Wow.exe` itself bypasses the system resolver for these hostnames — almost certainly via libcurl with `c-ares` or a Windows DNS API path that does not consult Wine's hosts shim. The connection still goes to the real Blizzard IP (`137.221.106.103`, RIPE-NL) even with the hosts entry present.
+
+**Static-patching scope (verified empirically against the 1.13.2 dump):**
+
+- `support.worldofwarcraft.com/kb/`, `support.wow-europe.com/kb/`, `support.worldofwarcraft.co.kr/kb/`, `support.worldofwarcraft.co.kr/kbtw/` — **all four are flat ASCII strings in `.rdata`** (clustered at offset `0x1c7e978` in the decrypted dump). These are patchable via the existing pattern infrastructure. New pattern: `SUPPORT_KB_URL_PATTERN` (or four sibling patterns; either shape works since they sit contiguously).
+- `launcher.worldofwarcraft.com/alert` — **NOT in the binary anywhere** as a flat string. Verified across `.text` (decrypted dump), `.rdata`, `.rsrc`, and UTF-16 forms; zero hits for the hostname, the `/alert` path, the `http://launcher.` prefix, or any obvious template form like `launcher.%s`. The hostname materialises only on the wire. The static patcher cannot rewrite this URL because there is no string to find.
+
+That means a configurable URL flag is straightforward for the support endpoints (`--support-kb-url`, with regional siblings) but **the launcher alert hostname requires a different mechanism**:
+
+1. **Runtime-mode hooking** — same path as the deferred Arctium-style runtime patcher. After Arxan unpacks, hook the URL constructor before the libcurl call.
+2. **Transparent network redirection** — iptables redirect 80/443 egress to localhost. Belongs in operator tooling, not the patcher.
+3. **Find the constructor and patch its inputs** — open question for future Ghidra work. The constructor probably reads from a config the client fetches early (one of the `*.battle.net` BPSV files or similar) or assembles the URL from compiled-in pieces split across multiple constant loads.
+
+Until one of those lands, the recommended workaround for live testing is: **/etc/hosts redirect + a port-80 stub server** to absorb the launcher alert and support probes. The hosts-file redirect is unreliable for the launcher URL specifically (Wow.exe bypasses it for that hostname — likely libcurl with c-ares), but it is reliable for the support hostnames. Combining hosts redirects with a stub on 80 covers both.
+
+The corresponding server side belongs in the **PoC's BGS reimplementation**, not here. The patcher's job is just the URL substitution.
+
+For the broader RE context (BLZ error code decoding, the Lua glue chain that drives the disconnect dialog, why we believed it was an auth failure when it was really a pre-auth probe failure), see the management repo's Serena memories `analysis/wow-1132-pre-login-http-probes` and `analysis/wow-1132-blz-error-codes`.
+
 ## Communication Guidelines
 
 Use Markdown, no emojis. These guidelines apply to all communication: conversations, documentation, commit messages, changelogs, and code comments.
@@ -266,7 +314,7 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 
 ## Implemented Features
 
-1. Portal pattern: `.actual.battle.net` replacement with null bytes.
+1. Portal pattern: `.actual.battle.net` replacement with `.localhost` (NUL-padded to 18 bytes). See "Portal pattern NUL-collapse pitfall" below.
 2. Three RSA modulus patterns: ConnectTo, Signature, and Crypto (with fallback chain). Full 256-byte replacement.
 3. Ed25519 public key pattern: Crypto Ed25519 pattern. Full 32-byte replacement.
 4. Version URL patching: three URL patterns (v1 HTTP, v2 HTTPS, v3 unified API) with Arctium CDN defaults.
