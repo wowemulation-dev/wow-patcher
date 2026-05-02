@@ -174,6 +174,47 @@ pub enum Commands {
         #[arg(long = "post-decrypt-wait", default_value_t = 0)]
         post_decrypt_wait: u64,
     },
+
+    /// Launch the WoW client with runtime-mode patches applied
+    /// (Windows / Wine only).
+    ///
+    /// Resumes the client from a CREATE_SUSPENDED state, waits for
+    /// Arxan to decrypt the .text section, NOPs the integrity check,
+    /// then writes the configured RSA / Ed25519 / portal / cert-bundle
+    /// patches via WriteProcessMemory before resuming.
+    ///
+    /// This is the runtime counterpart to the default static-binary
+    /// patching flow. Use it when static patching of SignatureModulus
+    /// crashes the client at startup (verified failure mode on Wine
+    /// staging 11.0 against WoW Classic 1.13.2; see Serena memory
+    /// `analysis/wow-1132-signature-modulus-static-patch-crashes`).
+    ///
+    /// The same global flags (--rsa-hex, --bgs-portal-domain,
+    /// --cert-bundle-url, --cert-bundle, etc.) configure the patches.
+    Launch {
+        /// Seconds to wait for Arxan decryption (0 = auto-detect via
+        /// the same heuristic dump-sections uses). Only relevant
+        /// when --legacy-cert-mode is set.
+        #[arg(short = 'w', long, default_value_t = 0)]
+        wait: u64,
+
+        /// Apply legacy-cert-mode patches (1.14+ only).
+        ///
+        /// Adds SignatureModulus replacement, embedded cert-bundle
+        /// byte injection, and runtime cert-validation NOPs
+        /// (Integrity, CertBundle JZ, CertCommonName, CertChain) on
+        /// top of the default data-slot patches. These additions
+        /// match Arctium-WoW-Launcher's `legacyCertMode` block at
+        /// `Launcher.cs:249-260,288-300`.
+        ///
+        /// Do NOT use for 1.13.x: that build's cert-bundle pin
+        /// verifies against ConnectToModulus directly, so
+        /// SignatureModulus must be left stock. (Replacing it
+        /// statically crashes `bgs::schannel_filter::InitCredentials`;
+        /// see `analysis/wow-1132-signature-modulus-static-patch-crashes`.)
+        #[arg(long = "legacy-cert-mode", default_value_t = false)]
+        legacy_cert_mode: bool,
+    },
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -252,6 +293,71 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = (&location, &parsed, wait, post_decrypt_wait);
                 Err("dump-sections requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
+            }
+        }
+        Some(Commands::Launch {
+            wait,
+            legacy_cert_mode,
+        }) => {
+            let location = cli
+                .location
+                .unwrap_or_else(crate::platform::find_warcraft_client_executable);
+            if location.is_empty() {
+                return Err("No WoW executable specified. Use -l flag to specify the path.".into());
+            }
+
+            // Build the same key/portal/cert-bundle config as the
+            // static path so users can pass identical flags.
+            let mut key_config = KeyConfig::default();
+            if cli.rsa_file.is_some() && cli.rsa_hex.is_some() {
+                return Err("Cannot specify both --rsa-file and --rsa-hex at the same time".into());
+            }
+            if cli.ed25519_file.is_some() && cli.ed25519_hex.is_some() {
+                return Err("Cannot specify both --ed25519-file and --ed25519-hex at the same time".into());
+            }
+            if let Some(p) = &cli.rsa_file {
+                key_config = key_config.with_rsa_from_file(p)?;
+            } else if let Some(h) = &cli.rsa_hex {
+                key_config = key_config.with_rsa_from_hex(h)?;
+            }
+            if let Some(p) = &cli.ed25519_file {
+                key_config = key_config.with_ed25519_from_file(p)?;
+            } else if let Some(h) = &cli.ed25519_hex {
+                key_config = key_config.with_ed25519_from_hex(h)?;
+            }
+
+            let portal_domain = match &cli.portal_domain {
+                Some(d) => PortalDomain::parse(d)?,
+                None => PortalDomain::default(),
+            };
+
+            let mut cert_bundle = CertBundleConfig::default();
+            if let Some(path) = &cli.cert_bundle {
+                cert_bundle = cert_bundle.with_bundle_from_file(path)?;
+            }
+            if let Some(url) = &cli.cert_bundle_url {
+                cert_bundle = cert_bundle.with_download_url(url)?;
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                crate::cmd::launch::win::launch_and_patch(
+                    crate::cmd::launch::win::LaunchOptions {
+                        exe_path: &location,
+                        key_config: &key_config,
+                        portal_domain: &portal_domain,
+                        cert_bundle: &cert_bundle,
+                        legacy_cert_mode,
+                        wait_seconds: wait,
+                        verbose: cli.verbose,
+                    },
+                )?;
+                return Ok(());
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (&location, &key_config, &portal_domain, &cert_bundle, wait, legacy_cert_mode);
+                Err("launch requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
             }
         }
         None => {
