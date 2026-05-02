@@ -124,6 +124,60 @@ pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowP
     Ok(())
 }
 
+/// Replace every non-overlapping occurrence of `find` in `data` with `replace`.
+///
+/// Like [`patch`] but applies to all matches. Returns the number of
+/// replacements made; `Ok(0)` if no match was found (caller decides
+/// whether that's an error).
+///
+/// `replace.len()` must equal `find.len()` (typically guaranteed by
+/// [`PatternExt::padded`]). The scan advances by `find.len()` after each
+/// match to avoid overlapping rewrites.
+///
+/// Use this for hostname-substring rewrites (e.g. `nydus.battle.net`)
+/// that the binary embeds at multiple call sites — error-message URLs,
+/// cosmetic UI URLs, AND the load-bearing cert-bundle URL all share the
+/// same host substring and must flip together for consistency.
+pub fn patch_all(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<usize, WowPatcherError> {
+    if data.is_empty() {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "cannot patch empty data",
+        ));
+    }
+    if find.len() > data.len() {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "pattern longer than data",
+        ));
+    }
+    if replace.len() != find.len() {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            format!(
+                "patch_all requires equal-length pattern and replacement (find={}, replace={})",
+                find.len(),
+                replace.len()
+            ),
+        ));
+    }
+
+    let mut count = 0usize;
+    let mut start = 0usize;
+    while start + find.len() <= data.len() {
+        match find_pattern(&data[start..], find) {
+            Some(rel) => {
+                let pos = start + rel;
+                data[pos..pos + replace.len()].copy_from_slice(replace);
+                count += 1;
+                start = pos + find.len();
+            }
+            None => break,
+        }
+    }
+    Ok(count)
+}
+
 fn find_pattern(data: &[u8], pattern: &Pattern) -> Option<usize> {
     if pattern.is_empty() || data.len() < pattern.len() {
         return None;
@@ -167,6 +221,43 @@ mod tests {
 
         let pattern = vec![1, -1, 3, -1, 5];
         assert_eq!(pattern.empty(), vec![0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_patch_all_replaces_every_occurrence() {
+        let mut data = b"prefix XYZ middle XYZ end XYZ tail".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        let replace = b"ABC";
+        let n = patch_all(&mut data, &pattern, replace).expect("patch_all should succeed");
+        assert_eq!(n, 3);
+        assert_eq!(&data, b"prefix ABC middle ABC end ABC tail");
+    }
+
+    #[test]
+    fn test_patch_all_returns_zero_when_no_match() {
+        let mut data = b"no match here".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        let n = patch_all(&mut data, &pattern, b"ABC").expect("zero matches is not an error");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_patch_all_does_not_overlap() {
+        // "aaaa" with pattern "aa" -> two non-overlapping matches at offsets 0 and 2.
+        let mut data = b"aaaa".to_vec();
+        let pattern = string_to_pattern("aa");
+        let n = patch_all(&mut data, &pattern, b"bb").expect("ok");
+        assert_eq!(n, 2);
+        assert_eq!(&data, b"bbbb");
+    }
+
+    #[test]
+    fn test_patch_all_rejects_length_mismatch() {
+        let mut data = b"hello".to_vec();
+        let pattern = string_to_pattern("hello");
+        let err =
+            patch_all(&mut data, &pattern, b"hi").expect_err("length mismatch should error");
+        assert!(format!("{}", err).contains("equal-length"));
     }
 
     #[test]
