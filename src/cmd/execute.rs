@@ -6,8 +6,8 @@ use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
 use crate::patterns::{
     cdns_url_pattern, cert_bundle_pattern, cert_bundle_url_pattern, connect_to_modulus_pattern,
-    crypto_ed_public_key_pattern, crypto_rsa_modulus_pattern, portal_pattern,
-    signature_modulus_pattern, version_url_pattern, version_url_v2_pattern, version_url_v3_pattern,
+    crypto_ed_public_key_pattern, portal_pattern, version_url_pattern, version_url_v2_pattern,
+    version_url_v3_pattern,
 };
 use crate::platform::{
     detect_client_type, extract_version, extract_version_fallback, remove_codesigning_signature,
@@ -128,15 +128,10 @@ pub fn execute_patch(
         offsets_to_validate.push((offset, "Cert bundle URL"));
     }
 
-    // Check RSA modulus patterns (multiple patterns for different client versions)
+    // Check ConnectToModulus only (Signature / CryptoRsa are not patched
+    // by the static path -- see the apply-flow comment).
     if let Some(offset) = data.find_pattern(connect_to_modulus_pattern()) {
         offsets_to_validate.push((offset, "RSA Modulus (ConnectTo)"));
-    }
-    if let Some(offset) = data.find_pattern(signature_modulus_pattern()) {
-        offsets_to_validate.push((offset, "RSA Modulus (Signature)"));
-    }
-    if let Some(offset) = data.find_pattern(crypto_rsa_modulus_pattern()) {
-        offsets_to_validate.push((offset, "RSA Modulus (Crypto)"));
     }
 
     // Check Ed25519 pattern (only for clients that use it)
@@ -212,11 +207,11 @@ pub fn execute_patch(
         println!("Patches that would be applied:");
 
         // Check each pattern in the same order as the apply path:
-        // RSA -> Ed25519 -> Nydus host -> Portal -> Version URL -> CDNs URL.
+        // RSA (ConnectTo only) -> Ed25519 -> Cert bundle -> Cert
+        // bundle URL -> Portal -> Version URL -> CDNs URL.
+        // Static patcher only touches ConnectToModulus -- see the
+        // apply-flow comment for why Signature / Crypto are unsafe.
         let mut temp_data = data.clone();
-        let mut rsa_found = false;
-        let mut rsa_pattern = "";
-
         if patch(
             &mut temp_data,
             connect_to_modulus_pattern(),
@@ -224,42 +219,14 @@ pub fn execute_patch(
         )
         .is_ok()
         {
-            rsa_found = true;
-            rsa_pattern = "ConnectTo";
-        } else if patch(
-            &mut temp_data,
-            signature_modulus_pattern(),
-            key_config.rsa_modulus(),
-        )
-        .is_ok()
-        {
-            rsa_found = true;
-            rsa_pattern = "Signature";
-        } else if patch(
-            &mut temp_data,
-            crypto_rsa_modulus_pattern(),
-            key_config.rsa_modulus(),
-        )
-        .is_ok()
-        {
-            rsa_found = true;
-            rsa_pattern = "Crypto";
-        }
-
-        if rsa_found {
-            if key_config.is_trinity_core() {
-                println!(
-                    "  ✓ RSA modulus → TrinityCore RSA key (256 bytes, {} pattern)",
-                    rsa_pattern
-                );
+            let key_label = if key_config.is_trinity_core() {
+                "TrinityCore key"
             } else {
-                println!(
-                    "  ✓ RSA modulus → Custom RSA key (256 bytes, {} pattern)",
-                    rsa_pattern
-                );
-            }
+                "custom key"
+            };
+            println!("  ✓ RSA modulus -> {} (ConnectTo)", key_label);
         } else {
-            println!("  ✗ RSA modulus pattern not found (tried ConnectTo, Signature, Crypto)");
+            println!("  ✗ ConnectToModulus pattern not found");
         }
 
         temp_data = data.clone();
@@ -478,61 +445,58 @@ pub fn execute_patch(
     // See `docs/wow-classic/_cross-build/patcher-coverage.md` for the
     // complete group catalog.
 
-    // RSA modulus - try all three patterns (different client versions use different patterns)
-    let mut rsa_patched = false;
-    let mut rsa_pattern_name = "";
-
-    if patch(
+    // RSA modulus - patch ConnectToModulus only.
+    //
+    // The wow-patcher historically supported three RSA modulus patterns
+    // (ConnectTo, Signature, CryptoRsa), under the assumption that
+    // different client versions used different ones and the patcher
+    // should pick whichever matched. Empirical testing in 2026-05
+    // showed two of the three are actively unsafe for static
+    // replacement on 1.13.2 (and likely Classic family generally):
+    //
+    //   - SignatureModulus replacement crashes the client at startup
+    //     inside `bgs::schannel_filter::InitCredentials`
+    //     (Wine staging 11.0). See
+    //     `analysis/wow-1132-signature-modulus-static-patch-crashes`.
+    //
+    //   - CryptoRsaModulus is read at one site as a NUL-terminated
+    //     string identifier (FUN_14131a3e0 -- a 36-byte FNV-style hash
+    //     accumulator). The original Blizzard bytes contain an early
+    //     NUL that bounds the loop; replacement keys with no early NUL
+    //     walk past the slot into unmapped memory and page-fault. See
+    //     `analysis/wow-1132-crypto-rsa-modulus-not-rsa`.
+    //
+    // ConnectToModulus is the only RSA slot that is BOTH safe to
+    // replace AND load-bearing for the auth flow on 1.13.2 (the cert-
+    // bundle pin verifies against ConnectToModulus per
+    // `analysis/wow-1132-blz51901015-resolved`).
+    //
+    // For 1.14+ legacy mode (where SignatureModulus replacement IS
+    // required for the embedded-bundle pin), use the runtime
+    // `wow-patcher launch --legacy-cert-mode` subcommand. That path
+    // applies the modulus writes via WriteProcessMemory at a moment
+    // in the launch sequence that avoids the InitCredentials crash
+    // (matching Arctium-WoW-Launcher's approach).
+    if let Err(e) = patch(
         &mut data,
         connect_to_modulus_pattern(),
         key_config.rsa_modulus(),
-    )
-    .is_ok()
-    {
-        rsa_patched = true;
-        rsa_pattern_name = "ConnectTo";
-    } else if patch(
-        &mut data,
-        signature_modulus_pattern(),
-        key_config.rsa_modulus(),
-    )
-    .is_ok()
-    {
-        rsa_patched = true;
-        rsa_pattern_name = "Signature";
-    } else if patch(
-        &mut data,
-        crypto_rsa_modulus_pattern(),
-        key_config.rsa_modulus(),
-    )
-    .is_ok()
-    {
-        rsa_patched = true;
-        rsa_pattern_name = "Crypto";
-    }
-
-    if !rsa_patched {
+    ) {
         if verbose {
-            println!("  ✗ No RSA modulus pattern found (tried ConnectTo, Signature, Crypto)");
+            println!("  ✗ ConnectToModulus pattern not found: {}", e);
         }
-        return Err(WowPatcherError::new(
+        return Err(WowPatcherError::wrap(
             ErrorCategory::PatchingError,
-            "Failed to patch RSA modulus - no known pattern found (unsupported WoW version)",
+            "Failed to patch ConnectToModulus -- unsupported WoW version",
+            e,
         ));
-    } else {
-        patch_count += 1;
-        if verbose {
-            if key_config.is_trinity_core() {
-                println!(
-                    "  ✓ RSA modulus patched (TrinityCore key, {} pattern)",
-                    rsa_pattern_name
-                );
-            } else {
-                println!(
-                    "  ✓ RSA modulus patched (custom key, {} pattern)",
-                    rsa_pattern_name
-                );
-            }
+    }
+    patch_count += 1;
+    if verbose {
+        if key_config.is_trinity_core() {
+            println!("  ✓ RSA modulus patched (TrinityCore key, ConnectTo)");
+        } else {
+            println!("  ✓ RSA modulus patched (custom key, ConnectTo)");
         }
     }
 
