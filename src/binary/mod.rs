@@ -124,6 +124,65 @@ pub fn patch(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<(), WowP
     Ok(())
 }
 
+/// Inject `replace` at the position of `find`, NUL-padding the remainder
+/// of `slot_len` if `replace.len() < slot_len`.
+///
+/// Use this when a binary slot is sized for a maximum-length payload and
+/// shorter replacements should NUL-fill the trailing bytes rather than
+/// leave the original content in place. Common case: replacing an
+/// embedded cert-bundle (slot ~32 KB) with a smaller user-supplied
+/// signed bundle.
+///
+/// `slot_len` is the slot's full byte width (where NUL-padding ends),
+/// NOT the original payload length. `find` is only used to locate the
+/// slot; its length need not equal `slot_len`.
+///
+/// Errors:
+/// - `replace.len() > slot_len`
+/// - pattern not found
+/// - slot extends past `data.len()`
+pub fn patch_with_padding(
+    data: &mut [u8],
+    find: &Pattern,
+    replace: &[u8],
+    slot_len: usize,
+) -> Result<(), WowPatcherError> {
+    if replace.len() > slot_len {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            format!(
+                "replacement ({} bytes) exceeds slot capacity ({} bytes)",
+                replace.len(),
+                slot_len
+            ),
+        ));
+    }
+    let Some(pos) = find_pattern(data, find) else {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "pattern not found in data",
+        ));
+    };
+    let end = pos.checked_add(slot_len).ok_or_else(|| {
+        WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "slot length overflows usize when added to match position",
+        )
+    })?;
+    if end > data.len() {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "slot extends past the end of data",
+        ));
+    }
+    data[pos..pos + replace.len()].copy_from_slice(replace);
+    // Zero the remainder of the slot.
+    for b in &mut data[pos + replace.len()..end] {
+        *b = 0;
+    }
+    Ok(())
+}
+
 /// Replace every non-overlapping occurrence of `find` in `data` with `replace`.
 ///
 /// Like [`patch`] but applies to all matches. Returns the number of
@@ -258,6 +317,46 @@ mod tests {
         let err =
             patch_all(&mut data, &pattern, b"hi").expect_err("length mismatch should error");
         assert!(format!("{}", err).contains("equal-length"));
+    }
+
+    #[test]
+    fn test_patch_with_padding_smaller_replacement_zeroes_tail() {
+        let mut data = b"prefix XYZAAAAAAAAA tail".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        // Slot is 12 bytes ("XYZAAAAAAAAA"), replacement is 5 bytes, tail
+        // 7 bytes should be zeroed.
+        patch_with_padding(&mut data, &pattern, b"NEWXX", 12).expect("patch ok");
+        let slot_start = data.windows(5).position(|w| w == b"NEWXX").unwrap();
+        assert_eq!(&data[slot_start..slot_start + 5], b"NEWXX");
+        assert_eq!(&data[slot_start + 5..slot_start + 12], &[0u8; 7]);
+        // Bytes past the slot are untouched.
+        assert!(data.ends_with(b" tail"));
+    }
+
+    #[test]
+    fn test_patch_with_padding_exact_size_replacement() {
+        let mut data = b"prefix XYZAAAAA tail".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        patch_with_padding(&mut data, &pattern, b"NEW12345", 8).expect("patch ok");
+        assert!(data.windows(8).any(|w| w == b"NEW12345"));
+    }
+
+    #[test]
+    fn test_patch_with_padding_rejects_oversize() {
+        let mut data = b"prefix XYZAA tail".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        let err = patch_with_padding(&mut data, &pattern, b"WAY_TOO_LONG", 5)
+            .expect_err("oversize must error");
+        assert!(format!("{}", err).contains("exceeds slot"));
+    }
+
+    #[test]
+    fn test_patch_with_padding_rejects_pattern_not_found() {
+        let mut data = b"no match here".to_vec();
+        let pattern = string_to_pattern("XYZ");
+        let err = patch_with_padding(&mut data, &pattern, b"AB", 3)
+            .expect_err("missing pattern must error");
+        assert!(format!("{}", err).contains("pattern not found"));
     }
 
     #[test]

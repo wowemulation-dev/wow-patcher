@@ -20,6 +20,7 @@ pub static VERSION_URL_V2_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static VERSION_URL_V3_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CDNS_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CERT_BUNDLE_PATTERN: OnceLock<Pattern> = OnceLock::new();
+pub static CERT_BUNDLE_URL_PATTERN: OnceLock<Pattern> = OnceLock::new();
 
 pub fn portal_pattern() -> &'static Pattern {
     PORTAL_PATTERN.get_or_init(|| string_to_pattern(".actual.battle.net"))
@@ -78,8 +79,35 @@ pub fn cdns_url_pattern() -> &'static Pattern {
     CDNS_URL_PATTERN.get_or_init(|| string_to_pattern("http://%s.patch.battle.net:1119/%s/cdns"))
 }
 
+/// Cert-bundle envelope start: `{"Created":` (11 bytes).
+///
+/// Marks the beginning of an embedded cert-bundle JSON in `.rdata`.
+/// Present in 1.14.0 / 1.14.1 / 1.14.2 / 2.5.3 (~32761 bytes total
+/// per bundle: JSON + `NGIS` magic + 256-byte RSA-2048 signature).
+/// Absent in 1.13.2 / 1.15.2 / 3.4.3 / 4.4.2 (those builds either
+/// download the bundle from `nydus.battle.net` or restructure the
+/// flow entirely).
 pub fn cert_bundle_pattern() -> &'static Pattern {
     CERT_BUNDLE_PATTERN.get_or_init(|| string_to_pattern("{\"Created\":"))
+}
+
+/// Cert-bundle download URL literal.
+///
+/// Matches the verbatim 59-byte URL `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint`
+/// the client fetches on startup to download an emergency cert bundle
+/// when no embedded bundle is present (or as the bootstrap path for
+/// 1.13.2 which has no embedded bundle).
+///
+/// Present in 1.13.2 / 1.14.0 / 1.14.1 / 1.14.2 / 2.5.3 (5 builds);
+/// absent in 1.15.2 / 3.4.3 / 4.4.2 (those builds construct the URL
+/// differently or rely solely on the embedded bundle).
+///
+/// The slot is 59 bytes + trailing NUL. Replacements must be ≤ 59
+/// bytes and are NUL-padded by the caller.
+pub fn cert_bundle_url_pattern() -> &'static Pattern {
+    CERT_BUNDLE_URL_PATTERN.get_or_init(|| {
+        string_to_pattern("http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint")
+    })
 }
 
 #[cfg(test)]
@@ -155,6 +183,21 @@ mod tests {
     #[test]
     fn test_nydus_pattern_distinct_from_portal() {
         assert_ne!(*nydus_pattern(), *portal_pattern());
+    }
+
+    #[test]
+    fn test_cert_bundle_url_pattern() {
+        let expected = string_to_pattern(
+            "http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint",
+        );
+        assert_eq!(*cert_bundle_url_pattern(), expected);
+        assert_eq!(cert_bundle_url_pattern().len(), 59);
+    }
+
+    #[test]
+    fn test_cert_bundle_url_pattern_distinct() {
+        assert_ne!(*cert_bundle_url_pattern(), *cert_bundle_pattern());
+        assert_ne!(*cert_bundle_url_pattern(), *nydus_pattern());
     }
 
     #[test]
