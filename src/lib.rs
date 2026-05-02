@@ -77,6 +77,7 @@ pub mod keys;
 pub mod patcher;
 pub mod patterns;
 pub mod platform;
+pub mod portal_domain;
 pub mod trinity;
 pub mod version;
 
