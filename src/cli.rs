@@ -1,4 +1,5 @@
 use crate::keys::KeyConfig;
+use crate::portal_domain::PortalDomain;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -76,6 +77,20 @@ pub struct Cli {
     /// Custom CDNs URL for CDN redirection
     #[arg(long = "cdns-url", value_name = "URL", global = true)]
     pub cdns_url: Option<String>,
+
+    /// Override the public portal domain rewritten into the binary.
+    ///
+    /// The patcher rewrites Battle.net hostname suffixes
+    /// (`.actual.battle.net`, `nydus.battle.net`) to use the chosen
+    /// domain instead. The default `wowemu.dev` is byte-identical in
+    /// length to `battle.net` so no NUL padding is needed. Shorter
+    /// domains (max 10 bytes total) work via NUL-padding.
+    ///
+    /// Use this for local testing with a domain you control via
+    /// `/etc/hosts` (e.g. `bgs.corp`). Falls back to the
+    /// `WOW_PORTAL_DOMAIN` env var if the flag is not set.
+    #[arg(long = "portal-domain", value_name = "DOMAIN", env = "WOW_PORTAL_DOMAIN", global = true)]
+    pub portal_domain: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -280,6 +295,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            // Resolve the portal domain (CLI flag or env, falling back to the public default).
+            let portal_domain = match &cli.portal_domain {
+                Some(d) => PortalDomain::parse(d)?,
+                None => PortalDomain::default(),
+            };
+            if cli.verbose {
+                println!("Portal domain: {}", portal_domain.as_str());
+            }
+
             let input_path = PathBuf::from(&location);
             let output_path = PathBuf::from(cli.output.unwrap_or_else(|| "Arctium".to_string()));
 
@@ -289,6 +313,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 key_config,
                 cli.version_url.as_deref(),
                 cli.cdns_url.as_deref(),
+                portal_domain,
                 cli.dry_run,
                 cli.sign,
                 cli.verbose,

@@ -44,6 +44,7 @@
 use crate::cmd::execute::execute_patch;
 use crate::errors::WowPatcherError;
 use crate::keys::KeyConfig;
+use crate::portal_domain::PortalDomain;
 use std::path::{Path, PathBuf};
 
 /// A builder for patching World of Warcraft executables.
@@ -62,6 +63,8 @@ pub struct Patcher {
     version_url: Option<String>,
     /// Custom CDNs URL
     cdns_url: Option<String>,
+    /// Public portal domain to rewrite into the binary (default `wowemu.dev`)
+    portal_domain: Option<PortalDomain>,
     /// Dry run mode (preview changes without modifying files)
     dry_run: bool,
     /// Strip macOS code signing
@@ -91,6 +94,7 @@ impl Patcher {
             key_config: None,
             version_url: None,
             cdns_url: None,
+            portal_domain: None,
             dry_run: false,
             strip_codesign: false,
             verbose: false,
@@ -317,6 +321,19 @@ impl Patcher {
         self
     }
 
+    /// Override the public portal domain rewritten into the binary.
+    ///
+    /// Defaults to `wowemu.dev`. Local testing typically passes
+    /// a domain you control via `/etc/hosts` (e.g. `bgs.corp`).
+    ///
+    /// Validation rules: ASCII alphanumeric + `.` + `-`, max 10 bytes
+    /// (the length of `battle.net`), must contain a `.`, must not start
+    /// or end with `.` or `-`.
+    pub fn portal_domain<S: AsRef<str>>(mut self, domain: S) -> Result<Self, WowPatcherError> {
+        self.portal_domain = Some(PortalDomain::parse(domain.as_ref())?);
+        Ok(self)
+    }
+
     /// Enable dry run mode (preview changes without modifying files).
     ///
     /// # Arguments
@@ -429,6 +446,9 @@ impl Patcher {
         // Use TrinityCore keys if no custom keys specified
         let key_config = self.key_config.unwrap_or_else(KeyConfig::trinity_core);
 
+        // Resolve the portal domain (or default to wowemu.dev).
+        let portal_domain = self.portal_domain.unwrap_or_default();
+
         // Execute the patch
         execute_patch(
             &self.input,
@@ -436,6 +456,7 @@ impl Patcher {
             key_config,
             self.version_url.as_deref(),
             self.cdns_url.as_deref(),
+            portal_domain,
             self.dry_run,
             self.strip_codesign,
             self.verbose,
