@@ -69,6 +69,7 @@
 //! ```
 
 pub mod binary;
+pub mod cert_bundle;
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod cmd;
