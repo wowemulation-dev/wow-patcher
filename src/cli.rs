@@ -79,18 +79,24 @@ pub struct Cli {
     #[arg(long = "cdns-url", value_name = "URL", global = true)]
     pub cdns_url: Option<String>,
 
-    /// Override the public portal domain rewritten into the binary.
+    /// Override the public BGS portal domain rewritten into the binary.
     ///
-    /// The patcher rewrites Battle.net hostname suffixes
-    /// (`.actual.battle.net`, `nydus.battle.net`) to use the chosen
-    /// domain instead. The default `wowemu.dev` is byte-identical in
-    /// length to `battle.net` so no NUL padding is needed. Shorter
-    /// domains (max 10 bytes total) work via NUL-padding.
+    /// The patcher rewrites the BGS Aurora-RPC portal hostname suffix
+    /// `.actual.battle.net` to `.actual.<domain>`. The default
+    /// `wowemu.dev` is byte-identical in length to `battle.net` so no
+    /// NUL padding is needed. Shorter domains (max 10 bytes total)
+    /// work via NUL-padding.
+    ///
+    /// Scope: this flag controls ONLY the BGS portal suffix. The
+    /// cert-bundle download URL has its own `--cert-bundle-url` flag,
+    /// and the cosmetic `nydus.battle.net` URLs (driver-unsupported,
+    /// trial-restriction, gametime, checkout, checkoutnav) are NOT
+    /// rewritten by the current patcher.
     ///
     /// Use this for local testing with a domain you control via
     /// `/etc/hosts` (e.g. `bgs.corp`). Falls back to the
-    /// `WOW_PORTAL_DOMAIN` env var if the flag is not set.
-    #[arg(long = "portal-domain", value_name = "DOMAIN", env = "WOW_PORTAL_DOMAIN", global = true)]
+    /// `WOW_BGS_PORTAL_DOMAIN` env var if the flag is not set.
+    #[arg(long = "bgs-portal-domain", value_name = "DOMAIN", env = "WOW_BGS_PORTAL_DOMAIN", global = true)]
     pub portal_domain: Option<String>,
 
     /// Inject a custom signed cert bundle (≤ 32761 bytes).
@@ -112,8 +118,8 @@ pub struct Cli {
     /// Replaces the literal `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint`
     /// in builds that have it as a flat string (1.13.2, 1.14.x, 2.5.3).
     /// Use this when you want the patched client to fetch its bundle
-    /// from a URL you control (e.g. a different host than what
-    /// `--portal-domain` produces).
+    /// from a URL you control (e.g. a different host than the BGS
+    /// portal hostname controlled by `--bgs-portal-domain`).
     #[arg(long = "cert-bundle-url", value_name = "URL", global = true)]
     pub cert_bundle_url: Option<String>,
 }
@@ -326,7 +332,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 None => PortalDomain::default(),
             };
             if cli.verbose {
-                println!("Portal domain: {}", portal_domain.as_str());
+                println!("BGS portal domain: {}", portal_domain.as_str());
             }
 
             // Resolve cert-bundle overrides (both optional, both validated).

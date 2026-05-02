@@ -135,14 +135,27 @@ src/
 3. Version extraction: Tries `goblin` parsing (stub, returns None), then regex fallback for patterns like `10.2.5.53584`.
 4. Section validation: Locates all pattern offsets and verifies each is in a patchable section (`.rdata`/`.data` for PE, `__DATA`/`__DATA_CONST` for Mach-O).
 5. Dry run: If enabled, prints preview of all patches and exits.
-6. Apply patches in order:
-   - Portal: mandatory, replaced with `.localhost` (NUL-padded to 18 bytes). Error if not found. See "Portal pattern NUL-collapse pitfall" below.
-   - RSA modulus: mandatory, tries ConnectTo → Signature → Crypto pattern. Error if none found.
-   - Ed25519: optional (depends on client type). Warning if not found.
-   - Version URL: optional, tries v1 → v2 → v3 patterns. Warning if not found.
-   - CDNs URL: optional (skipped if v3 unified API used). Warning if not found.
+6. Apply patches in dependency order (each step's effect depends on the prior step's output):
+   - **RSA modulus** (mandatory): tries ConnectTo → Signature → Crypto pattern. Error if none found. Defeats the cert-bundle signature pin.
+   - **Ed25519 key** (optional, modern clients only).
+   - **Cert bundle bytes** (optional, `--cert-bundle FILE`): inject signed bundle into the embedded `{"Created":` slot. 1.14.x / 2.5.3 only; skipped with note on other builds.
+   - **Cert bundle URL** (optional, `--cert-bundle-url URL`): rewrite the 59-byte download URL slot. 1.13.2 / 1.14.x / 2.5.3 only; skipped with note on other builds.
+   - **BGS portal** (mandatory): rewrites `.actual.battle.net` to `.actual.<bgs-portal-domain>`. Default domain `wowemu.dev`; configurable via `--bgs-portal-domain DOMAIN` or `WOW_BGS_PORTAL_DOMAIN` env var. Error if not found. See "Portal pattern NUL-collapse pitfall" below.
+   - **Version URL** (optional): tries v1 → v2 → v3 patterns.
+   - **CDNs URL** (optional, skipped if v3 unified API used).
 7. Write output with 0o755 permissions on Unix.
 8. Strip code signing on macOS if enabled.
+
+### Logical groups (out of scope for current patcher)
+
+The patcher's static `.rdata` rewrites only cover the auth-flow critical path. These additional groups exist as identified-but-not-implemented work:
+
+- **`nydus-cosmetic`**: rewrite the 5 cosmetic `nydus.battle.net` URLs (driver-unsupported, trial-restriction, gametime, checkout, checkoutnav). NOT covered by `--bgs-portal-domain` -- it deliberately scopes only to `.actual.battle.net`. Future opt-in flag.
+- **`launcher-login`**: redirect the Phoenix launcher-login registry-key path. Useful for running stock + patched clients side-by-side without WEB_TOKEN collision.
+- **`cert-runtime`**: runtime memory-write patches (`.text` section) for cert-validation conditional branches: `CertBundle` JZ-NOP, `CertCommonName` MOV-1, `CertChain` flag flip. Arctium uses these in dev mode + 1.14+ legacy. We rely on the static RSA-modulus replacement instead.
+- **`arxan-runtime`**: anti-crash + anti-tamper memory writes Arctium does at process launch. Requires the deferred runtime `launch` subcommand.
+
+See `<management-repo>/src/reverse-engineering/wow-classic/_cross-build/patcher-coverage.md` for the canonical group catalog with per-build presence + Arctium-vs-us coverage matrix.
 
 ## Code Style and Conventions
 

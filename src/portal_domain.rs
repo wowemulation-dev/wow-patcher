@@ -1,17 +1,24 @@
-//! Portal-domain configuration for hostname rewrites.
+//! BGS-portal-domain configuration for the `.actual.battle.net` rewrite.
 //!
-//! The 1.13.x-4.4.x WoW Classic clients construct the BGS portal hostname
-//! by concatenating a region prefix with the literal `.actual.battle.net`
-//! at runtime. Similarly the cert-bundle download URL embeds the literal
-//! `nydus.battle.net`. We rewrite both to substitute a domain we control,
-//! defaulting to `wowemu.dev` (same length as `battle.net` -- 10 bytes --
-//! so no NUL padding is required).
+//! The 1.13.x-4.4.x WoW Classic clients construct the BGS Aurora-RPC
+//! portal hostname by concatenating a region prefix with the literal
+//! `.actual.battle.net` at runtime. We rewrite the suffix to substitute
+//! a domain we control, defaulting to `wowemu.dev` (same length as
+//! `battle.net` -- 10 bytes -- so no NUL padding is required).
 //!
-//! For local testing, callers can override via `--portal-domain` (CLI) or
-//! the `WOW_PORTAL_DOMAIN` env var to use any other domain such as
-//! `bgs.corp`. Domains shorter than `battle.net` work via NUL padding;
-//! domains longer than `battle.net` are rejected because they would
-//! exceed the pattern slot.
+//! For local testing, callers can override via `--bgs-portal-domain`
+//! (CLI) or the `WOW_BGS_PORTAL_DOMAIN` env var to use any other
+//! domain such as `bgs.corp`. Domains shorter than `battle.net` work
+//! via NUL padding; domains longer than `battle.net` are rejected
+//! because they would exceed the pattern slot.
+//!
+//! Scope: this module governs ONLY the BGS portal suffix. The
+//! cert-bundle download URL is handled by `cert_bundle::CertBundleConfig`
+//! (with `--cert-bundle-url`), which targets the specific 59-byte URL
+//! literal rather than the host substring. The 5 cosmetic
+//! `nydus.battle.net` URLs (driver-unsupported, trial-restriction,
+//! gametime, checkout, checkoutnav) are intentionally NOT rewritten by
+//! this module -- they belong to a future `nydus-cosmetic` group.
 
 use crate::errors::{ErrorCategory, WowPatcherError};
 
@@ -128,18 +135,6 @@ impl PortalDomain {
         out
     }
 
-    /// Replacement bytes for the `nydus_pattern()` slot.
-    ///
-    /// The pattern is `nydus.battle.net` (16 bytes). We replace with
-    /// `nydus.<domain>`, NUL-padded to 16 bytes by the caller. For the
-    /// default `wowemu.dev`, this is exactly `nydus.wowemu.dev`
-    /// (16 bytes, no padding).
-    pub fn nydus_replacement(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(6 + self.raw.len());
-        out.extend_from_slice(b"nydus.");
-        out.extend_from_slice(self.raw.as_bytes());
-        out
-    }
 }
 
 impl Default for PortalDomain {
@@ -158,24 +153,20 @@ mod tests {
     }
 
     #[test]
-    fn default_replacements_match_pattern_lengths() {
+    fn default_replacement_matches_pattern_length() {
         let d = PortalDomain::default();
         // .actual.battle.net is 18 bytes; .actual.wowemu.dev is also 18
         assert_eq!(d.portal_replacement().len(), 18);
         assert_eq!(&d.portal_replacement(), b".actual.wowemu.dev");
-        // nydus.battle.net is 16 bytes; nydus.wowemu.dev is also 16
-        assert_eq!(d.nydus_replacement().len(), 16);
-        assert_eq!(&d.nydus_replacement(), b"nydus.wowemu.dev");
     }
 
     #[test]
     fn shorter_domain_validates_and_pads_at_use_site() {
-        // bgs.corp is 8 bytes; replacements need 2 NULs of padding when
-        // placed in the 18- and 16-byte slots respectively.
+        // bgs.corp is 8 bytes; replacement is 16 bytes (".actual.bgs.corp"),
+        // and the patch caller NUL-fills to fit the 18-byte portal slot.
         let d = PortalDomain::parse("bgs.corp").unwrap();
         assert_eq!(d.as_str(), "bgs.corp");
-        assert_eq!(d.portal_replacement(), b".actual.bgs.corp"); // 16 bytes; padded() will NUL-fill to 18
-        assert_eq!(d.nydus_replacement(), b"nydus.bgs.corp"); // 14 bytes; padded() will NUL-fill to 16
+        assert_eq!(d.portal_replacement(), b".actual.bgs.corp");
     }
 
     #[test]

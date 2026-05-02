@@ -1,13 +1,12 @@
 use crate::binary::{
-    DataExt, PatternExt, check_offset_section, patch, patch_all, patch_with_padding,
-    validate_patch_offsets,
+    DataExt, PatternExt, check_offset_section, patch, patch_with_padding, validate_patch_offsets,
 };
 use crate::cert_bundle::CertBundleConfig;
 use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
 use crate::patterns::{
     cdns_url_pattern, cert_bundle_pattern, cert_bundle_url_pattern, connect_to_modulus_pattern,
-    crypto_ed_public_key_pattern, crypto_rsa_modulus_pattern, nydus_pattern, portal_pattern,
+    crypto_ed_public_key_pattern, crypto_rsa_modulus_pattern, portal_pattern,
     signature_modulus_pattern, version_url_pattern, version_url_v2_pattern, version_url_v3_pattern,
 };
 use crate::platform::{
@@ -113,11 +112,6 @@ pub fn execute_patch(
     // Check portal pattern
     if let Some(offset) = data.find_pattern(portal_pattern()) {
         offsets_to_validate.push((offset, "Portal (.actual.battle.net)"));
-    }
-
-    // Check nydus pattern (cert-bundle download host literal)
-    if let Some(offset) = data.find_pattern(nydus_pattern()) {
-        offsets_to_validate.push((offset, "Nydus host (nydus.battle.net)"));
     }
 
     // Check cert-bundle envelope pattern (only present in 1.14.x / 2.5.3)
@@ -324,22 +318,6 @@ pub fn execute_patch(
         }
 
         temp_data = data.clone();
-        match patch_all(
-            &mut temp_data,
-            nydus_pattern(),
-            &nydus_pattern().padded(&portal_domain.nydus_replacement()),
-        ) {
-            Ok(0) => println!("  ✗ Nydus host pattern not found"),
-            Ok(n) => println!(
-                "  ✓ Nydus host ({} site{} -- nydus.battle.net → nydus.{})",
-                n,
-                if n == 1 { "" } else { "s" },
-                portal_domain.as_str()
-            ),
-            Err(e) => println!("  ✗ Nydus host patch error: {}", e),
-        }
-
-        temp_data = data.clone();
         if patch(
             &mut temp_data,
             portal_pattern(),
@@ -348,11 +326,11 @@ pub fn execute_patch(
         .is_ok()
         {
             println!(
-                "  ✓ Portal pattern (.actual.battle.net → .actual.{})",
+                "  ✓ BGS portal (.actual.battle.net → .actual.{})",
                 portal_domain.as_str()
             );
         } else {
-            println!("  ✗ Portal pattern not found");
+            println!("  ✗ BGS portal pattern not found");
         }
 
         temp_data = data.clone();
@@ -475,22 +453,30 @@ pub fn execute_patch(
         println!("Applying patches...");
     }
 
-    // Patch order rationale:
-    //   1. RSA modulus  -- defeats the cert-bundle pin check by replacing
-    //      the modulus the client uses to verify the bundle's signature.
-    //      Must be in place before any TLS contact with bgs-server, and
-    //      before any cert-bundle URL fetch returns a self-signed bundle.
-    //   2. Ed25519 key  -- pairs with RSA for clients that use it.
-    //   3. Nydus host   -- redirects the cert-bundle download URL (and 5
-    //      cosmetic siblings sharing the substring) so the client fetches
-    //      our self-signed bundle from a host we control instead of
-    //      Blizzard's CDN.
-    //   4. Portal host  -- redirects the BGS HTTPS portal hostname (and
-    //      the BGS RPC TCP host) so the client connects to bgs-server.
-    //   5/6. Version + CDNs URLs -- TACT origin redirect for boot/install.
+    // Patch order rationale -- follows the runtime dependency chain:
+    //   1. RSA modulus       -- defeats the cert-bundle signature pin.
+    //   2. Ed25519 key       -- pairs with RSA for clients that use it.
+    //   3. Cert bundle bytes -- inject our signed bundle into the embedded
+    //      `{"Created":` slot (1.14.x / 2.5.3 only). Validates against the
+    //      modulus replaced in step 1.
+    //   4. Cert bundle URL   -- rewrite the 59-byte download URL slot so the
+    //      client fetches our self-signed bundle from an operator-controlled
+    //      host (1.13.2 / 1.14.x / 2.5.3 only).
+    //   5. BGS portal host   -- redirect `.actual.battle.net` so the BGS
+    //      HTTPS portal + Aurora-RPC TCP land on bgs-server.
+    //   6/7. Version + CDNs URLs -- TACT origin redirect for boot/install.
     //
-    // Within (3) and (4), the patches don't overlap so byte-order doesn't
-    // matter; the source order tracks the runtime dependency chain.
+    // Out of scope here (handled by separate future groups):
+    //   - 5 cosmetic nydus.battle.net URLs (driver-unsupported, trial
+    //     restriction, gametime/transactions UI, checkout, checkoutnav)
+    //     -- future `nydus-cosmetic` group
+    //   - Phoenix launcher-login registry path
+    //     -- future `launcher-login` group
+    //   - Runtime cert-validation branch flips (CertBundle JZ-NOP,
+    //     CertCommonName, CertChain) and Arxan anti-tamper
+    //     -- future `cert-runtime` / `arxan-runtime` groups, runtime-only
+    // See `docs/wow-classic/_cross-build/patcher-coverage.md` for the
+    // complete group catalog.
 
     // RSA modulus - try all three patterns (different client versions use different patterns)
     let mut rsa_patched = false;
@@ -652,45 +638,7 @@ pub fn execute_patch(
         }
     }
 
-    // Nydus host: `nydus.battle.net` (16 bytes) → `nydus.<domain>`.
-    // The 1.13.x client downloads its emergency cert bundle from the
-    // verbatim URL `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint`
-    // (literal at e.g. 0x141cd0b70 in 1.13.2). The same host substring
-    // appears in 6 distinct URLs in 1.13.2 -- the cert-bundle URL plus
-    // 5 cosmetic ones (driver-unsupported error link, trial-restriction
-    // page, two checkout URLs, the `/WoW/` UX prefix). We rewrite ALL
-    // of them with `patch_all` so every nydus URL flips together.
-    //
-    // The cert-bundle defeat itself depends on the RSA modulus rewrite
-    // above: our self-signed bundle validates against the replacement
-    // modulus, so the pin check passes when the client downloads the
-    // bundle from our nydus stub.
-    let nydus_replacement = nydus_pattern().padded(&portal_domain.nydus_replacement());
-    match patch_all(&mut data, nydus_pattern(), &nydus_replacement) {
-        Ok(0) => {
-            if verbose {
-                println!("  ⚠ Nydus host pattern not found (continuing)");
-            }
-        }
-        Ok(n) => {
-            patch_count += 1;
-            if verbose {
-                println!(
-                    "  ✓ Nydus host patched ({} site{} -- nydus.battle.net → nydus.{})",
-                    n,
-                    if n == 1 { "" } else { "s" },
-                    portal_domain.as_str()
-                );
-            }
-        }
-        Err(e) => {
-            if verbose {
-                println!("  ⚠ Nydus host patch failed: {} (continuing)", e);
-            }
-        }
-    }
-
-    // Portal pattern: replace `.actual.battle.net` with `.actual.<domain>`
+    // BGS portal: `.actual.battle.net` → `.actual.<domain>`
     // (NUL-padded to 18 bytes if shorter). The 1.13.x-4.4.x clients construct
     // the BGS portal URL via NUL-terminated string concat — `<region> +
     // ".actual.battle.net" + "/path"`. Filling with all-NUL collapses the
@@ -702,21 +650,27 @@ pub fn execute_patch(
     // The chosen domain must be reachable from the patched client's host
     // (typically via `/etc/hosts` or a controlled resolver) and the
     // bgs-server cert must be issued for / cover the resulting hostname.
+    //
+    // Scope note: this rewrites ONLY the BGS portal suffix. The cert-bundle
+    // download URL is handled by the cert-bundle group above; the 5 cosmetic
+    // nydus.battle.net URLs (driver-unsupported, trial-restriction, gametime,
+    // checkout, checkoutnav) are intentionally left untouched -- they belong
+    // to a future `nydus-cosmetic` group, not the auth-flow critical path.
     let portal_replacement = portal_pattern().padded(&portal_domain.portal_replacement());
     if let Err(e) = patch(&mut data, portal_pattern(), &portal_replacement) {
         if verbose {
-            println!("  ✗ Portal pattern not found: {}", e);
+            println!("  ✗ BGS portal pattern not found: {}", e);
         }
         return Err(WowPatcherError::wrap(
             ErrorCategory::PatchingError,
-            "Failed to patch portal pattern - unsupported WoW version",
+            "Failed to patch BGS portal pattern - unsupported WoW version",
             e,
         ));
     } else {
         patch_count += 1;
         if verbose {
             println!(
-                "  ✓ Portal pattern patched (.actual.battle.net → .actual.{})",
+                "  ✓ BGS portal patched (.actual.battle.net → .actual.{})",
                 portal_domain.as_str()
             );
         }

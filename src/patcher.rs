@@ -325,15 +325,24 @@ impl Patcher {
         self
     }
 
-    /// Override the public portal domain rewritten into the binary.
+    /// Override the public BGS portal domain rewritten into the binary.
     ///
-    /// Defaults to `wowemu.dev`. Local testing typically passes
-    /// a domain you control via `/etc/hosts` (e.g. `bgs.corp`).
+    /// Rewrites the BGS Aurora-RPC portal hostname suffix
+    /// `.actual.battle.net` to `.actual.<domain>`. Defaults to
+    /// `wowemu.dev`. Local testing typically passes a domain you
+    /// control via `/etc/hosts` (e.g. `bgs.corp`).
+    ///
+    /// Scope: only the BGS portal suffix. The cert-bundle download
+    /// URL has its own builder method (`cert_bundle_url`), and the
+    /// cosmetic nydus.battle.net URLs are not rewritten.
     ///
     /// Validation rules: ASCII alphanumeric + `.` + `-`, max 10 bytes
     /// (the length of `battle.net`), must contain a `.`, must not start
     /// or end with `.` or `-`.
-    pub fn portal_domain<S: AsRef<str>>(mut self, domain: S) -> Result<Self, WowPatcherError> {
+    pub fn bgs_portal_domain<S: AsRef<str>>(
+        mut self,
+        domain: S,
+    ) -> Result<Self, WowPatcherError> {
         self.portal_domain = Some(PortalDomain::parse(domain.as_ref())?);
         Ok(self)
     }
