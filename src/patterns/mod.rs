@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 pub mod runtime;
 
 pub static PORTAL_PATTERN: OnceLock<Pattern> = OnceLock::new();
+pub static NYDUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CONNECT_TO_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static SIGNATURE_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
 pub static CRYPTO_RSA_MODULUS_PATTERN: OnceLock<Pattern> = OnceLock::new();
@@ -22,6 +23,19 @@ pub static CERT_BUNDLE_PATTERN: OnceLock<Pattern> = OnceLock::new();
 
 pub fn portal_pattern() -> &'static Pattern {
     PORTAL_PATTERN.get_or_init(|| string_to_pattern(".actual.battle.net"))
+}
+
+/// Cert-bundle download host literal embedded in `Wow.exe`.
+///
+/// The full URL is `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint`.
+/// We rewrite only the host portion so the path layout is preserved and the
+/// stub server can match the verbatim path the client requests.
+///
+/// All 6 `nydus.battle.net` hits in 1.13.2 share this host literal (the other
+/// 5 paths -- driver-unsupported error link, trial-restriction page, two
+/// checkout URLs, the `/WoW/` UX prefix -- all flip in the same swing).
+pub fn nydus_pattern() -> &'static Pattern {
+    NYDUS_PATTERN.get_or_init(|| string_to_pattern("nydus.battle.net"))
 }
 
 pub fn connect_to_modulus_pattern() -> &'static Pattern {
@@ -125,6 +139,22 @@ mod tests {
         for &b in &empty {
             assert_eq!(b, 0);
         }
+    }
+
+    #[test]
+    fn test_nydus_pattern() {
+        let expected = string_to_pattern("nydus.battle.net");
+        assert_eq!(*nydus_pattern(), expected);
+        assert_eq!(nydus_pattern().len(), 16);
+
+        for (i, ch) in "nydus.battle.net".chars().enumerate() {
+            assert_eq!(nydus_pattern()[i], ch as i16);
+        }
+    }
+
+    #[test]
+    fn test_nydus_pattern_distinct_from_portal() {
+        assert_ne!(*nydus_pattern(), *portal_pattern());
     }
 
     #[test]
