@@ -212,11 +212,11 @@ pub fn execute_patch(
         println!("Patches that would be applied:");
 
         // Check each pattern in the same order as the apply path:
-        // RSA -> Ed25519 -> Nydus host -> Portal -> Version URL -> CDNs URL.
+        // RSA -> Ed25519 -> Cert bundle -> Cert bundle URL -> Portal
+        // -> Version URL -> CDNs URL.
+        // RSA: every present slot is patched independently.
         let mut temp_data = data.clone();
-        let mut rsa_found = false;
-        let mut rsa_pattern = "";
-
+        let mut rsa_slots: Vec<&'static str> = Vec::new();
         if patch(
             &mut temp_data,
             connect_to_modulus_pattern(),
@@ -224,42 +224,39 @@ pub fn execute_patch(
         )
         .is_ok()
         {
-            rsa_found = true;
-            rsa_pattern = "ConnectTo";
-        } else if patch(
+            rsa_slots.push("ConnectTo");
+        }
+        if patch(
             &mut temp_data,
             signature_modulus_pattern(),
             key_config.rsa_modulus(),
         )
         .is_ok()
         {
-            rsa_found = true;
-            rsa_pattern = "Signature";
-        } else if patch(
+            rsa_slots.push("Signature");
+        }
+        if patch(
             &mut temp_data,
             crypto_rsa_modulus_pattern(),
             key_config.rsa_modulus(),
         )
         .is_ok()
         {
-            rsa_found = true;
-            rsa_pattern = "Crypto";
+            rsa_slots.push("Crypto");
         }
-
-        if rsa_found {
-            if key_config.is_trinity_core() {
-                println!(
-                    "  ✓ RSA modulus → TrinityCore RSA key (256 bytes, {} pattern)",
-                    rsa_pattern
-                );
-            } else {
-                println!(
-                    "  ✓ RSA modulus → Custom RSA key (256 bytes, {} pattern)",
-                    rsa_pattern
-                );
-            }
-        } else {
+        if rsa_slots.is_empty() {
             println!("  ✗ RSA modulus pattern not found (tried ConnectTo, Signature, Crypto)");
+        } else {
+            let key_label = if key_config.is_trinity_core() {
+                "TrinityCore key"
+            } else {
+                "custom key"
+            };
+            println!(
+                "  ✓ RSA modulus -> {} (slots: {})",
+                key_label,
+                rsa_slots.join(" + ")
+            );
         }
 
         temp_data = data.clone();
@@ -478,9 +475,31 @@ pub fn execute_patch(
     // See `docs/wow-classic/_cross-build/patcher-coverage.md` for the
     // complete group catalog.
 
-    // RSA modulus - try all three patterns (different client versions use different patterns)
-    let mut rsa_patched = false;
-    let mut rsa_pattern_name = "";
+    // RSA modulus -- patch every present slot with the same key. Three
+    // distinct moduli appear in the binaries because each serves a
+    // different code path:
+    //   - ConnectToModulus: BGS Aurora-RPC EnterEncryptedMode handshake
+    //   - SignatureModulus: cert-bundle signature verification (load-bearing
+    //     for the cert-bundle pin path -- if this slot is left at the
+    //     stock Blizzard modulus, our self-signed bundle fails to verify
+    //     and the client falls through to system-store chain validation
+    //     which then also fails -> BLZ51901023)
+    //   - CryptoRsaModulus: alternative protocol-crypto modulus used by
+    //     older clients without Ed25519
+    //
+    // Per Arctium-WoW-Launcher (Launcher.cs:266-271 + the legacyCertMode
+    // block at 256-260), the same RSA modulus replacement bytes are
+    // written to BOTH ConnectToModulus AND SignatureModulus when the
+    // legacy cert mode applies. Our previous else-if chain stopped at
+    // the first match (ConnectTo) and left the other two slots stock;
+    // that broke 1.13.2 because all three slots are present in 1.13.2
+    // and SignatureModulus is the load-bearing one for the bundle pin.
+    //
+    // 1.13.2 byte-pattern presence (verified 2026-05-02):
+    //   ConnectToModulus @ 0x1c22530
+    //   SignatureModulus @ 0x1cd1270
+    //   CryptoRsaModulus @ 0x1cbe390
+    let mut rsa_patched_slots: Vec<&'static str> = Vec::new();
 
     if patch(
         &mut data,
@@ -489,29 +508,28 @@ pub fn execute_patch(
     )
     .is_ok()
     {
-        rsa_patched = true;
-        rsa_pattern_name = "ConnectTo";
-    } else if patch(
+        rsa_patched_slots.push("ConnectTo");
+    }
+    if patch(
         &mut data,
         signature_modulus_pattern(),
         key_config.rsa_modulus(),
     )
     .is_ok()
     {
-        rsa_patched = true;
-        rsa_pattern_name = "Signature";
-    } else if patch(
+        rsa_patched_slots.push("Signature");
+    }
+    if patch(
         &mut data,
         crypto_rsa_modulus_pattern(),
         key_config.rsa_modulus(),
     )
     .is_ok()
     {
-        rsa_patched = true;
-        rsa_pattern_name = "Crypto";
+        rsa_patched_slots.push("Crypto");
     }
 
-    if !rsa_patched {
+    if rsa_patched_slots.is_empty() {
         if verbose {
             println!("  ✗ No RSA modulus pattern found (tried ConnectTo, Signature, Crypto)");
         }
@@ -520,19 +538,21 @@ pub fn execute_patch(
             "Failed to patch RSA modulus - no known pattern found (unsupported WoW version)",
         ));
     } else {
+        // One patch_count increment for the whole RSA group (matches
+        // the prior accounting; counting per-slot would skew totals
+        // against older builds with fewer slots).
         patch_count += 1;
         if verbose {
-            if key_config.is_trinity_core() {
-                println!(
-                    "  ✓ RSA modulus patched (TrinityCore key, {} pattern)",
-                    rsa_pattern_name
-                );
+            let key_label = if key_config.is_trinity_core() {
+                "TrinityCore key"
             } else {
-                println!(
-                    "  ✓ RSA modulus patched (custom key, {} pattern)",
-                    rsa_pattern_name
-                );
-            }
+                "custom key"
+            };
+            println!(
+                "  ✓ RSA modulus patched ({}, slots: {})",
+                key_label,
+                rsa_patched_slots.join(" + ")
+            );
         }
     }
 
