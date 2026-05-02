@@ -41,6 +41,7 @@
 //! # }
 //! ```
 
+use crate::cert_bundle::CertBundleConfig;
 use crate::cmd::execute::execute_patch;
 use crate::errors::WowPatcherError;
 use crate::keys::KeyConfig;
@@ -65,6 +66,8 @@ pub struct Patcher {
     cdns_url: Option<String>,
     /// Public portal domain to rewrite into the binary (default `wowemu.dev`)
     portal_domain: Option<PortalDomain>,
+    /// Cert-bundle override (file + URL)
+    cert_bundle: CertBundleConfig,
     /// Dry run mode (preview changes without modifying files)
     dry_run: bool,
     /// Strip macOS code signing
@@ -95,6 +98,7 @@ impl Patcher {
             version_url: None,
             cdns_url: None,
             portal_domain: None,
+            cert_bundle: CertBundleConfig::default(),
             dry_run: false,
             strip_codesign: false,
             verbose: false,
@@ -334,6 +338,25 @@ impl Patcher {
         Ok(self)
     }
 
+    /// Inject a custom signed cert bundle from a file (≤ 32761 bytes).
+    ///
+    /// See `CertBundleConfig::with_bundle_from_file` for validation
+    /// rules. The bundle must be signed by a key whose modulus matches
+    /// the one supplied via `custom_keys*`.
+    pub fn cert_bundle_from_file<P: AsRef<Path>>(
+        mut self,
+        path: P,
+    ) -> Result<Self, WowPatcherError> {
+        self.cert_bundle = self.cert_bundle.with_bundle_from_file(path)?;
+        Ok(self)
+    }
+
+    /// Override the cert-bundle download URL (≤ 59 bytes).
+    pub fn cert_bundle_url<S: AsRef<str>>(mut self, url: S) -> Result<Self, WowPatcherError> {
+        self.cert_bundle = self.cert_bundle.with_download_url(url)?;
+        Ok(self)
+    }
+
     /// Enable dry run mode (preview changes without modifying files).
     ///
     /// # Arguments
@@ -457,6 +480,7 @@ impl Patcher {
             self.version_url.as_deref(),
             self.cdns_url.as_deref(),
             portal_domain,
+            self.cert_bundle,
             self.dry_run,
             self.strip_codesign,
             self.verbose,

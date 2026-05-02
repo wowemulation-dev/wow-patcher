@@ -1,3 +1,4 @@
+use crate::cert_bundle::CertBundleConfig;
 use crate::keys::KeyConfig;
 use crate::portal_domain::PortalDomain;
 use clap::{Parser, Subcommand};
@@ -91,6 +92,30 @@ pub struct Cli {
     /// `WOW_PORTAL_DOMAIN` env var if the flag is not set.
     #[arg(long = "portal-domain", value_name = "DOMAIN", env = "WOW_PORTAL_DOMAIN", global = true)]
     pub portal_domain: Option<String>,
+
+    /// Inject a custom signed cert bundle (≤ 32761 bytes).
+    ///
+    /// The file's bytes replace the embedded cert bundle in `.rdata`
+    /// of clients that ship with one (1.14.0/.1/.2, 2.5.3). For
+    /// clients without an embedded bundle (1.13.2, 1.15.2, 3.4.3,
+    /// 4.4.2), this flag has no effect at the embedded-slot site;
+    /// pair with `--cert-bundle-url` to redirect the download URL
+    /// to a host you control instead.
+    ///
+    /// The bundle must be signed by a key whose modulus matches the
+    /// one rewritten via `--rsa-file` / `--rsa-hex`.
+    #[arg(long = "cert-bundle", value_name = "FILE", global = true)]
+    pub cert_bundle: Option<String>,
+
+    /// Override the cert-bundle download URL (≤ 59 bytes).
+    ///
+    /// Replaces the literal `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint`
+    /// in builds that have it as a flat string (1.13.2, 1.14.x, 2.5.3).
+    /// Use this when you want the patched client to fetch its bundle
+    /// from a URL you control (e.g. a different host than what
+    /// `--portal-domain` produces).
+    #[arg(long = "cert-bundle-url", value_name = "URL", global = true)]
+    pub cert_bundle_url: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -304,6 +329,25 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Portal domain: {}", portal_domain.as_str());
             }
 
+            // Resolve cert-bundle overrides (both optional, both validated).
+            let mut cert_bundle = CertBundleConfig::default();
+            if let Some(path) = &cli.cert_bundle {
+                cert_bundle = cert_bundle.with_bundle_from_file(path)?;
+                if cli.verbose {
+                    println!(
+                        "Cert bundle: {} ({} bytes)",
+                        path,
+                        cert_bundle.bundle_bytes().map(|b| b.len()).unwrap_or(0)
+                    );
+                }
+            }
+            if let Some(url) = &cli.cert_bundle_url {
+                cert_bundle = cert_bundle.with_download_url(url)?;
+                if cli.verbose {
+                    println!("Cert bundle URL: {}", url);
+                }
+            }
+
             let input_path = PathBuf::from(&location);
             let output_path = PathBuf::from(cli.output.unwrap_or_else(|| "Arctium".to_string()));
 
@@ -314,6 +358,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli.version_url.as_deref(),
                 cli.cdns_url.as_deref(),
                 portal_domain,
+                cert_bundle,
                 cli.dry_run,
                 cli.sign,
                 cli.verbose,

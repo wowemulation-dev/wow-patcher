@@ -1,12 +1,14 @@
 use crate::binary::{
-    DataExt, PatternExt, check_offset_section, patch, patch_all, validate_patch_offsets,
+    DataExt, PatternExt, check_offset_section, patch, patch_all, patch_with_padding,
+    validate_patch_offsets,
 };
+use crate::cert_bundle::CertBundleConfig;
 use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
 use crate::patterns::{
-    cdns_url_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern,
-    crypto_rsa_modulus_pattern, nydus_pattern, portal_pattern, signature_modulus_pattern,
-    version_url_pattern, version_url_v2_pattern, version_url_v3_pattern,
+    cdns_url_pattern, cert_bundle_pattern, cert_bundle_url_pattern, connect_to_modulus_pattern,
+    crypto_ed_public_key_pattern, crypto_rsa_modulus_pattern, nydus_pattern, portal_pattern,
+    signature_modulus_pattern, version_url_pattern, version_url_v2_pattern, version_url_v3_pattern,
 };
 use crate::platform::{
     detect_client_type, extract_version, extract_version_fallback, remove_codesigning_signature,
@@ -16,6 +18,13 @@ use crate::trinity::{create_url_replacement, get_cdns_url, get_unified_api_url, 
 use std::fs;
 use std::path::Path;
 
+/// Slot size of the embedded cert bundle in `.rdata`.
+///
+/// The bundle is exactly `MAX_EMBEDDED_BUNDLE_SIZE` bytes followed by
+/// alignment NUL padding. We zero only the bundle portion; the
+/// alignment padding stays untouched.
+const EMBEDDED_BUNDLE_SLOT: usize = crate::cert_bundle::MAX_EMBEDDED_BUNDLE_SIZE;
+
 #[allow(clippy::too_many_arguments)]
 pub fn execute_patch(
     input_path: &Path,
@@ -24,6 +33,7 @@ pub fn execute_patch(
     version_url: Option<&str>,
     cdns_url: Option<&str>,
     portal_domain: PortalDomain,
+    cert_bundle: CertBundleConfig,
     dry_run: bool,
     strip_codesign: bool,
     verbose: bool,
@@ -108,6 +118,20 @@ pub fn execute_patch(
     // Check nydus pattern (cert-bundle download host literal)
     if let Some(offset) = data.find_pattern(nydus_pattern()) {
         offsets_to_validate.push((offset, "Nydus host (nydus.battle.net)"));
+    }
+
+    // Check cert-bundle envelope pattern (only present in 1.14.x / 2.5.3)
+    if cert_bundle.bundle_bytes().is_some()
+        && let Some(offset) = data.find_pattern(cert_bundle_pattern())
+    {
+        offsets_to_validate.push((offset, "Cert bundle envelope ({\"Created\":)"));
+    }
+
+    // Check cert-bundle URL literal (only present in 1.13.2 / 1.14.x / 2.5.3)
+    if cert_bundle.download_url().is_some()
+        && let Some(offset) = data.find_pattern(cert_bundle_url_pattern())
+    {
+        offsets_to_validate.push((offset, "Cert bundle URL"));
     }
 
     // Check RSA modulus patterns (multiple patterns for different client versions)
@@ -263,6 +287,40 @@ pub fn execute_patch(
             }
         } else {
             println!("  ⚠ Ed25519 public key not used by {} clients", client_type);
+        }
+
+        if let Some(bundle) = cert_bundle.bundle_bytes() {
+            temp_data = data.clone();
+            match patch_with_padding(
+                &mut temp_data,
+                cert_bundle_pattern(),
+                bundle,
+                EMBEDDED_BUNDLE_SLOT,
+            ) {
+                Ok(()) => println!(
+                    "  ✓ Cert bundle ({} bytes -> {}-byte embedded slot)",
+                    bundle.len(),
+                    EMBEDDED_BUNDLE_SLOT
+                ),
+                Err(_) => println!(
+                    "  ⚠ Cert bundle envelope not found (skipped; expected for 1.13.2 / 1.15.2 / 3.4.3 / 4.4.2)"
+                ),
+            }
+        }
+
+        if let Some(url) = cert_bundle.download_url() {
+            temp_data = data.clone();
+            match patch_with_padding(
+                &mut temp_data,
+                cert_bundle_url_pattern(),
+                url.as_bytes(),
+                cert_bundle_url_pattern().len(),
+            ) {
+                Ok(()) => println!("  ✓ Cert bundle URL -> {}", url),
+                Err(_) => println!(
+                    "  ⚠ Cert bundle URL not found (skipped; expected for 1.15.2 / 3.4.3 / 4.4.2)"
+                ),
+            }
         }
 
         temp_data = data.clone();
@@ -517,6 +575,81 @@ pub fn execute_patch(
         }
     } else if verbose {
         println!("  ℹ {} clients use RSA-based authentication", client_type);
+    }
+
+    // Cert-bundle injection: replace the embedded `{"Created":...}` envelope
+    // bytes in the binary with the user-supplied signed bundle. Slot is
+    // 32761 bytes; user-supplied bundle is NUL-padded to fill the slot.
+    //
+    // Only fires for builds that ship with an embedded bundle (1.14.0,
+    // 1.14.1, 1.14.2, 2.5.3). For builds without an embedded bundle
+    // (1.13.2, 1.15.2, 3.4.3, 4.4.2), the pattern won't match and we
+    // skip with a verbose note. For those builds the user should pair
+    // `--cert-bundle` with `--cert-bundle-url` to direct the runtime
+    // download path at a host they control that serves the bundle.
+    //
+    // Pairs with the RSA modulus rewrite above: the bundle's signature
+    // is verified against the embedded modulus, which we just replaced
+    // with the user's key. The user is responsible for ensuring the
+    // bundle file was signed by the matching private key.
+    if let Some(bundle) = cert_bundle.bundle_bytes() {
+        match patch_with_padding(&mut data, cert_bundle_pattern(), bundle, EMBEDDED_BUNDLE_SLOT) {
+            Ok(()) => {
+                patch_count += 1;
+                if verbose {
+                    println!(
+                        "  ✓ Cert bundle injected ({} bytes into {}-byte slot)",
+                        bundle.len(),
+                        EMBEDDED_BUNDLE_SLOT
+                    );
+                }
+            }
+            Err(e) => {
+                if verbose {
+                    println!(
+                        "  ⚠ Cert bundle pattern not found ({}); skipping injection",
+                        e
+                    );
+                    println!(
+                        "    (this is expected for clients without an embedded bundle: 1.13.2, 1.15.2, 3.4.3, 4.4.2)"
+                    );
+                }
+            }
+        }
+    }
+
+    // Cert-bundle download URL: replace the literal nydus URL with one
+    // pointing at a server the operator controls. Slot is 59 bytes;
+    // shorter URLs are NUL-padded.
+    //
+    // Use this when the user wants to decouple "where the bundle lives"
+    // from the rest of the namespace rewrites done by `--portal-domain`.
+    // For example, hosting the bundle on a separate CDN.
+    if let Some(url) = cert_bundle.download_url() {
+        match patch_with_padding(
+            &mut data,
+            cert_bundle_url_pattern(),
+            url.as_bytes(),
+            cert_bundle_url_pattern().len(),
+        ) {
+            Ok(()) => {
+                patch_count += 1;
+                if verbose {
+                    println!("  ✓ Cert bundle URL patched ({} bytes)", url.len());
+                }
+            }
+            Err(e) => {
+                if verbose {
+                    println!(
+                        "  ⚠ Cert bundle URL pattern not found ({}); skipping",
+                        e
+                    );
+                    println!(
+                        "    (this is expected for builds without the URL as a flat string: 1.15.2, 3.4.3, 4.4.2)"
+                    );
+                }
+            }
+        }
     }
 
     // Nydus host: `nydus.battle.net` (16 bytes) → `nydus.<domain>`.
