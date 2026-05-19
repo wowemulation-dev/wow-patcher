@@ -256,9 +256,7 @@ mod tests {
         // Exactly 59 bytes
         let url = "http://0123456789012345678901234567890123456789012345678.io";
         assert_eq!(url.len(), MAX_CERT_BUNDLE_URL_LEN);
-        let cfg = CertBundleConfig::default()
-            .with_download_url(url)
-            .unwrap();
+        let cfg = CertBundleConfig::default().with_download_url(url).unwrap();
         assert_eq!(cfg.download_url().unwrap().len(), MAX_CERT_BUNDLE_URL_LEN);
     }
 }

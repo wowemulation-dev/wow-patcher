@@ -543,7 +543,12 @@ pub fn execute_patch(
     // with the user's key. The user is responsible for ensuring the
     // bundle file was signed by the matching private key.
     if let Some(bundle) = cert_bundle.bundle_bytes() {
-        match patch_with_padding(&mut data, cert_bundle_pattern(), bundle, EMBEDDED_BUNDLE_SLOT) {
+        match patch_with_padding(
+            &mut data,
+            cert_bundle_pattern(),
+            bundle,
+            EMBEDDED_BUNDLE_SLOT,
+        ) {
             Ok(()) => {
                 patch_count += 1;
                 if verbose {
@@ -590,10 +595,7 @@ pub fn execute_patch(
             }
             Err(e) => {
                 if verbose {
-                    println!(
-                        "  ⚠ Cert bundle URL pattern not found ({}); skipping",
-                        e
-                    );
+                    println!("  ⚠ Cert bundle URL pattern not found ({}); skipping", e);
                     println!(
                         "    (this is expected for builds without the URL as a flat string: 1.15.2, 3.4.3, 4.4.2)"
                     );

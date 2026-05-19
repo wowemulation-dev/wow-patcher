@@ -134,7 +134,6 @@ impl PortalDomain {
         out.extend_from_slice(self.raw.as_bytes());
         out
     }
-
 }
 
 impl Default for PortalDomain {

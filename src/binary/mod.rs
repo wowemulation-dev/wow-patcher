@@ -197,7 +197,11 @@ pub fn patch_with_padding(
 /// that the binary embeds at multiple call sites — error-message URLs,
 /// cosmetic UI URLs, AND the load-bearing cert-bundle URL all share the
 /// same host substring and must flip together for consistency.
-pub fn patch_all(data: &mut [u8], find: &Pattern, replace: &[u8]) -> Result<usize, WowPatcherError> {
+pub fn patch_all(
+    data: &mut [u8],
+    find: &Pattern,
+    replace: &[u8],
+) -> Result<usize, WowPatcherError> {
     if data.is_empty() {
         return Err(WowPatcherError::new(
             ErrorCategory::PatchingError,
@@ -314,8 +318,7 @@ mod tests {
     fn test_patch_all_rejects_length_mismatch() {
         let mut data = b"hello".to_vec();
         let pattern = string_to_pattern("hello");
-        let err =
-            patch_all(&mut data, &pattern, b"hi").expect_err("length mismatch should error");
+        let err = patch_all(&mut data, &pattern, b"hi").expect_err("length mismatch should error");
         assert!(format!("{}", err).contains("equal-length"));
     }
 

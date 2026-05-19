@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(connect_to_modulus_pattern().len(), 8);
 
         for &val in connect_to_modulus_pattern().iter() {
-            assert!(val >= 0 && val <= 255);
+            assert!((0..=255).contains(&val));
         }
     }
 
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(crypto_ed_public_key_pattern().len(), 8);
 
         for &val in crypto_ed_public_key_pattern().iter() {
-            assert!(val >= 0 && val <= 255);
+            assert!((0..=255).contains(&val));
         }
     }
 
@@ -187,9 +187,8 @@ mod tests {
 
     #[test]
     fn test_cert_bundle_url_pattern() {
-        let expected = string_to_pattern(
-            "http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint",
-        );
+        let expected =
+            string_to_pattern("http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint");
         assert_eq!(*cert_bundle_url_pattern(), expected);
         assert_eq!(cert_bundle_url_pattern().len(), 59);
     }
@@ -276,7 +275,7 @@ mod tests {
         assert_eq!(signature_modulus_pattern().len(), 8);
 
         for &val in signature_modulus_pattern().iter() {
-            assert!(val >= 0 && val <= 255);
+            assert!((0..=255).contains(&val));
         }
     }
 
@@ -287,7 +286,7 @@ mod tests {
         assert_eq!(crypto_rsa_modulus_pattern().len(), 8);
 
         for &val in crypto_rsa_modulus_pattern().iter() {
-            assert!(val >= 0 && val <= 255);
+            assert!((0..=255).contains(&val));
         }
     }
 

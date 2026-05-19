@@ -339,10 +339,7 @@ impl Patcher {
     /// Validation rules: ASCII alphanumeric + `.` + `-`, max 10 bytes
     /// (the length of `battle.net`), must contain a `.`, must not start
     /// or end with `.` or `-`.
-    pub fn bgs_portal_domain<S: AsRef<str>>(
-        mut self,
-        domain: S,
-    ) -> Result<Self, WowPatcherError> {
+    pub fn bgs_portal_domain<S: AsRef<str>>(mut self, domain: S) -> Result<Self, WowPatcherError> {
         self.portal_domain = Some(PortalDomain::parse(domain.as_ref())?);
         Ok(self)
     }

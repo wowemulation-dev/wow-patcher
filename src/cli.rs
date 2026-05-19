@@ -96,7 +96,12 @@ pub struct Cli {
     /// Use this for local testing with a domain you control via
     /// `/etc/hosts` (e.g. `bgs.corp`). Falls back to the
     /// `WOW_BGS_PORTAL_DOMAIN` env var if the flag is not set.
-    #[arg(long = "bgs-portal-domain", value_name = "DOMAIN", env = "WOW_BGS_PORTAL_DOMAIN", global = true)]
+    #[arg(
+        long = "bgs-portal-domain",
+        value_name = "DOMAIN",
+        env = "WOW_BGS_PORTAL_DOMAIN",
+        global = true
+    )]
     pub portal_domain: Option<String>,
 
     /// Inject a custom signed cert bundle (≤ 32761 bytes).
@@ -313,7 +318,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("Cannot specify both --rsa-file and --rsa-hex at the same time".into());
             }
             if cli.ed25519_file.is_some() && cli.ed25519_hex.is_some() {
-                return Err("Cannot specify both --ed25519-file and --ed25519-hex at the same time".into());
+                return Err(
+                    "Cannot specify both --ed25519-file and --ed25519-hex at the same time".into(),
+                );
             }
             if let Some(p) = &cli.rsa_file {
                 key_config = key_config.with_rsa_from_file(p)?;
@@ -356,7 +363,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let _ = (&location, &key_config, &portal_domain, &cert_bundle, wait, legacy_cert_mode);
+                let _ = (
+                    &location,
+                    &key_config,
+                    &portal_domain,
+                    &cert_bundle,
+                    wait,
+                    legacy_cert_mode,
+                );
                 Err("launch requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
             }
         }

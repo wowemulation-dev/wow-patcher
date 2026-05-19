@@ -32,9 +32,7 @@ pub mod win {
     use std::{io, thread, time};
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::Diagnostics::Debug::{
-        ReadProcessMemory, WriteProcessMemory,
-    };
+    use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
     use windows_sys::Win32::System::Memory::{
         MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
         VirtualProtectEx, VirtualQueryEx,
@@ -46,12 +44,13 @@ pub mod win {
     use crate::binary::Pattern;
     use crate::cert_bundle::CertBundleConfig;
     use crate::keys::KeyConfig;
-    use crate::patterns::{cert_bundle_url_pattern, portal_pattern};
     use crate::patterns::runtime::{
         cert_bundle_branch_pattern, cert_bundle_header_pattern, cert_chain_pattern,
         cert_common_name_pattern, connect_to_modulus_pattern, crypto_ed_public_key_pattern,
-        crypto_rsa_modulus_pattern, integrity_pattern, integrity_pattern_alt, signature_modulus_pattern,
+        crypto_rsa_modulus_pattern, integrity_pattern, integrity_pattern_alt,
+        signature_modulus_pattern,
     };
+    use crate::patterns::{cert_bundle_url_pattern, portal_pattern};
     use crate::portal_domain::PortalDomain;
 
     #[link(name = "ntdll")]
@@ -189,11 +188,7 @@ pub mod win {
         // Validate RSA key once up front.
         let rsa_key = opts.key_config.rsa_modulus().to_vec();
         if rsa_key.len() != 256 {
-            return Err(format!(
-                "RSA modulus must be 256 bytes, got {}",
-                rsa_key.len()
-            )
-            .into());
+            return Err(format!("RSA modulus must be 256 bytes, got {}", rsa_key.len()).into());
         }
 
         // ---- PHASE A: data slot patches (always applied) ----
@@ -346,8 +341,7 @@ pub mod win {
             unsafe { NtResumeProcess(process_handle) };
             std::mem::forget(guard);
             return Err(
-                "No patches applied -- no patterns matched. The binary may be unsupported."
-                    .into(),
+                "No patches applied -- no patterns matched. The binary may be unsupported.".into(),
             );
         }
 
@@ -374,10 +368,7 @@ pub mod win {
             }
         }
         if opts.verbose {
-            println!(
-                "Phase A: applied {applied}/{} patches.",
-                patches.len()
-            );
+            println!("Phase A: applied {applied}/{} patches.", patches.len());
             println!("Resuming process for Arxan TLS callback...");
         }
         unsafe { NtResumeProcess(process_handle) };
@@ -397,7 +388,9 @@ pub mod win {
             if opts.wait_seconds > 0 {
                 thread::sleep(time::Duration::from_secs(opts.wait_seconds));
             } else {
-                if let Err(e) = wait_for_decryption(process_handle, base_address + 0x1000, opts.verbose) {
+                if let Err(e) =
+                    wait_for_decryption(process_handle, base_address + 0x1000, opts.verbose)
+                {
                     eprintln!("Warning: {e}. Skipping runtime cert patches.");
                     unsafe {
                         CloseHandle(process_handle);

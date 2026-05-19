@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_new_platform_error() {
-        let base_err = std::io::Error::new(std::io::ErrorKind::Other, "command failed");
+        let base_err = std::io::Error::other("command failed");
         let plat_err = new_platform_error("codesign failed", base_err, "remove_signature");
 
         assert_eq!(plat_err.category, ErrorCategory::PlatformError);
@@ -291,7 +291,7 @@ mod tests {
         let level2 = WowPatcherError::wrap(
             ErrorCategory::ValidationError,
             "validation error",
-            std::io::Error::new(std::io::ErrorKind::Other, level1.to_string()),
+            std::io::Error::other(level1.to_string()),
         );
 
         let err_msg = level2.to_string();
