@@ -34,7 +34,7 @@ pub mod win {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
     use windows_sys::Win32::System::Memory::{
-        MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+        MEM_COMMIT, MEM_IMAGE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
         VirtualProtectEx, VirtualQueryEx,
     };
     use windows_sys::Win32::System::Threading::{
@@ -811,6 +811,15 @@ pub mod win {
 
     // ---- Wait helpers (mirror cmd::dump's logic) ----
 
+    /// Wait for the main module image to be mapped, then return its base
+    /// address.
+    ///
+    /// Fast path: probe 0x140000000 (the preferred image base for WoW
+    /// x64). Fallback: walk the address space for a MEM_IMAGE region
+    /// starting with an `MZ` header whose size is in the 30-200 MB range
+    /// covering all known WoW Classic builds (1.13.2 ~38 MB on disk
+    /// through 5.5.3 ~62 MB). See cmd::dump for the dump-side variant
+    /// that uses an exact PE-derived size hint.
     fn wait_for_memory_init(
         process_handle: HANDLE,
         verbose: bool,
@@ -819,6 +828,8 @@ pub mod win {
         let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
         let sleep_duration = time::Duration::from_millis(100);
         let mut attempts: u32 = 0;
+        let max_attempts: u32 = 600; // 60 seconds total
+
         loop {
             let result = unsafe {
                 VirtualQueryEx(
@@ -828,18 +839,128 @@ pub mod win {
                     mbi_size,
                 )
             };
-            if result != 0 && mbi.RegionSize > 0x1000 && mbi.State == MEM_COMMIT {
+            if result != 0
+                && mbi.RegionSize > 0x1000
+                && mbi.State == MEM_COMMIT
+                && mbi.Type == MEM_IMAGE
+            {
                 return Ok(mbi.BaseAddress as usize);
             }
+
+            if let Some(base) = scan_for_module_image(process_handle) {
+                if verbose {
+                    println!(
+                        "Module image located at 0x{base:X} via fallback scan"
+                    );
+                }
+                return Ok(base);
+            }
+
             attempts += 1;
-            if attempts > 300 {
-                return Err("Timeout waiting for memory initialization".into());
+            if attempts > max_attempts {
+                return Err(format!(
+                    "Timeout waiting for memory initialization after {attempts} attempts \
+                     (probe at 0x140000000: result={result}, RegionSize=0x{:X}, State=0x{:X}, \
+                     Type=0x{:X}, AllocationBase=0x{:X})",
+                    mbi.RegionSize, mbi.State, mbi.Type, mbi.AllocationBase as usize
+                )
+                .into());
             }
             if verbose && attempts.is_multiple_of(10) {
-                println!("Waiting for memory initialization... ({attempts})");
+                println!(
+                    "Waiting for memory initialization... ({attempts}) [probe@0x140000000: \
+                     result={result}, RegionSize=0x{:X}, State=0x{:X}, Type=0x{:X}, \
+                     AllocationBase=0x{:X}]",
+                    mbi.RegionSize, mbi.State, mbi.Type, mbi.AllocationBase as usize
+                );
             }
             thread::sleep(sleep_duration);
         }
+    }
+
+    /// Walk the address space for the WoW main module image. Returns
+    /// AllocationBase of the first MEM_IMAGE allocation that:
+    ///   - starts with `MZ` (a PE header) at AllocationBase, and
+    ///   - has total contiguous extent in the 30-200 MB range matching
+    ///     known WoW Classic image sizes.
+    fn scan_for_module_image(process_handle: HANDLE) -> Option<usize> {
+        const LOWER: usize = 30 * 1024 * 1024;
+        const UPPER: usize = 200 * 1024 * 1024;
+
+        let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+        let mut addr: usize = 0x10000;
+        let scan_ceiling: usize = 0x0000_8000_0000_0000;
+
+        let mut current_alloc_base: usize = 0;
+        let mut current_extent: usize = 0;
+        let mut current_is_pe: bool = false;
+
+        loop {
+            if addr >= scan_ceiling {
+                break;
+            }
+            let result = unsafe {
+                VirtualQueryEx(
+                    process_handle,
+                    addr as *const _,
+                    &mut mbi,
+                    mbi_size,
+                )
+            };
+            if result == 0 {
+                break;
+            }
+            let region_base = mbi.BaseAddress as usize;
+            let region_size = mbi.RegionSize;
+            let alloc_base = mbi.AllocationBase as usize;
+
+            if mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE && alloc_base != 0 {
+                if alloc_base != current_alloc_base {
+                    if current_is_pe
+                        && current_extent >= LOWER
+                        && current_extent <= UPPER
+                    {
+                        return Some(current_alloc_base);
+                    }
+                    current_alloc_base = alloc_base;
+                    current_extent = 0;
+                    let mut mz = [0u8; 2];
+                    let mut br: usize = 0;
+                    let ok = unsafe {
+                        ReadProcessMemory(
+                            process_handle,
+                            alloc_base as *const _,
+                            mz.as_mut_ptr() as *mut _,
+                            mz.len(),
+                            &mut br,
+                        )
+                    };
+                    current_is_pe = ok != 0 && br == 2 && mz == [b'M', b'Z'];
+                }
+                current_extent += region_size;
+            } else if alloc_base != current_alloc_base && current_alloc_base != 0 {
+                if current_is_pe
+                    && current_extent >= LOWER
+                    && current_extent <= UPPER
+                {
+                    return Some(current_alloc_base);
+                }
+                current_alloc_base = 0;
+                current_extent = 0;
+                current_is_pe = false;
+            }
+
+            let next = region_base.saturating_add(region_size);
+            if next <= addr {
+                break;
+            }
+            addr = next;
+        }
+        if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
+            return Some(current_alloc_base);
+        }
+        None
     }
 
     fn wait_for_decryption(

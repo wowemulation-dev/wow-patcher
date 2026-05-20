@@ -16,7 +16,8 @@ pub mod win {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows_sys::Win32::System::Memory::{
-        MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx,
+        MEM_COMMIT, MEM_IMAGE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, VirtualProtectEx,
+        VirtualQueryEx,
     };
     use windows_sys::Win32::System::Threading::{
         CREATE_SUSPENDED, CreateProcessA, PROCESS_INFORMATION, STARTUPINFOA, TerminateProcess,
@@ -187,7 +188,17 @@ pub mod win {
         }
         unsafe { NtResumeProcess(process_handle) };
 
-        let base_address = wait_for_memory_init(process_handle, verbose)?;
+        // Total image size hint from PE headers — last section's VA+VSize
+        // rounded up gives an upper bound for the loaded image. Used to
+        // verify a scanned candidate region is the main module image,
+        // not some unrelated mapping.
+        let image_size_hint: usize = all_sections
+            .iter()
+            .map(|s| s.virtual_address as usize + s.virtual_size)
+            .max()
+            .unwrap_or(0);
+
+        let base_address = wait_for_memory_init(process_handle, image_size_hint, verbose)?;
         if verbose {
             println!("Base address: 0x{base_address:X}");
         }
@@ -234,33 +245,20 @@ pub mod win {
                 );
             }
 
-            let mut buffer = vec![0u8; info.virtual_size];
-            let mut bytes_read: usize = 0;
-
-            let read_ok = unsafe {
-                ReadProcessMemory(
-                    process_handle,
-                    section_base as *const _,
-                    buffer.as_mut_ptr() as *mut _,
-                    info.virtual_size,
-                    &mut bytes_read,
-                )
-            };
-
-            if read_ok == 0 {
-                return Err(format!(
-                    "ReadProcessMemory failed for section {}: {}",
-                    info.name,
-                    io::Error::last_os_error()
-                )
-                .into());
-            }
+            let buffer = read_section_with_protect_fallback(
+                process_handle,
+                section_base,
+                info.virtual_size,
+                &info.name,
+                verbose,
+            )?;
+            let bytes_read = buffer.len();
 
             if verbose {
                 println!("  Read {bytes_read} bytes");
             }
 
-            std::fs::write(out_path, &buffer[..bytes_read])?;
+            std::fs::write(out_path, &buffer)?;
             println!(
                 "Dumped {} section to: {out_path} ({bytes_read} bytes)",
                 info.name
@@ -270,16 +268,36 @@ pub mod win {
         Ok(())
     }
 
+    /// Wait for the main module image to be mapped, then return its base
+    /// address.
+    ///
+    /// Fast path: probe 0x140000000 (the preferred image base for WoW
+    /// x64). If a committed image-backed region is mapped there, return.
+    ///
+    /// Fallback path (used when 0x140000000 isn't mapped — e.g. clients
+    /// with a `*_loader.dll` sidecar that load the main image elsewhere):
+    /// walk the address space via VirtualQueryEx, find the first
+    /// MEM_IMAGE allocation whose first page starts with `MZ` (a PE
+    /// header) and whose extent matches the on-disk image size hint
+    /// (±25%). Return the AllocationBase.
+    ///
+    /// Diagnostic logging every 10 attempts dumps what the fast-path
+    /// probe sees (RegionSize, State, Type, AllocationBase) so an
+    /// operator can tell whether the image is unmapped, reserved, or
+    /// mapped at a different base.
     fn wait_for_memory_init(
         process_handle: HANDLE,
+        image_size_hint: usize,
         verbose: bool,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
         let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
         let sleep_duration = time::Duration::from_millis(100);
         let mut attempts = 0;
+        let max_attempts = 600; // 60 seconds total
 
         loop {
+            // Fast path: probe the preferred image base.
             let result = unsafe {
                 VirtualQueryEx(
                     process_handle,
@@ -289,21 +307,336 @@ pub mod win {
                 )
             };
 
-            if result != 0 && mbi.RegionSize > 0x1000 && mbi.State == MEM_COMMIT {
+            if result != 0
+                && mbi.RegionSize > 0x1000
+                && mbi.State == MEM_COMMIT
+                && mbi.Type == MEM_IMAGE
+            {
                 return Ok(mbi.BaseAddress as usize);
             }
 
+            // Fallback: scan for a MEM_IMAGE region of the expected size
+            // anywhere in the user address space. The PE header (an `MZ`
+            // signature) is read from the candidate's AllocationBase to
+            // confirm it is a module image.
+            if let Some(base) =
+                scan_for_module_image(process_handle, image_size_hint)
+            {
+                if verbose {
+                    println!(
+                        "Module image located at 0x{base:X} via fallback scan"
+                    );
+                }
+                return Ok(base);
+            }
+
             attempts += 1;
-            if attempts > 300 {
-                return Err("Timeout waiting for memory initialization".into());
+            if attempts > max_attempts {
+                return Err(format!(
+                    "Timeout waiting for memory initialization after {attempts} attempts \
+                     (probe at 0x140000000: result={result}, RegionSize=0x{:X}, State=0x{:X}, \
+                     Type=0x{:X}, AllocationBase=0x{:X}). The main module did not become \
+                     mapped at 0x140000000 and the fallback MEM_IMAGE scan found no match.",
+                    mbi.RegionSize, mbi.State, mbi.Type, mbi.AllocationBase as usize
+                )
+                .into());
             }
 
             if verbose && attempts % 10 == 0 {
-                println!("Waiting for memory initialization... ({attempts})");
+                println!(
+                    "Waiting for memory initialization... ({attempts}) [probe@0x140000000: \
+                     result={result}, RegionSize=0x{:X}, State=0x{:X}, Type=0x{:X}, \
+                     AllocationBase=0x{:X}]",
+                    mbi.RegionSize, mbi.State, mbi.Type, mbi.AllocationBase as usize
+                );
             }
 
             thread::sleep(sleep_duration);
         }
+    }
+
+    /// Walk the target process address space looking for the main module
+    /// image. Returns the AllocationBase of the first MEM_IMAGE region
+    /// that:
+    ///   1. Has an `MZ` PE signature at its AllocationBase.
+    ///   2. Has a total extent (sum of contiguous regions sharing the
+    ///      same AllocationBase) within 25% of `image_size_hint`.
+    ///
+    /// Returns None if no candidate is found in this pass.
+    fn scan_for_module_image(
+        process_handle: HANDLE,
+        image_size_hint: usize,
+    ) -> Option<usize> {
+        if image_size_hint == 0 {
+            return None;
+        }
+        let lower = image_size_hint.saturating_mul(3) / 4;
+        let upper = image_size_hint.saturating_mul(5) / 4;
+
+        let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+
+        let mut addr: usize = 0x10000; // skip the null page
+        let mut last_alloc_base: usize = 0;
+        let mut current_extent: usize = 0;
+        let mut current_alloc_base: usize = 0;
+        let mut current_is_pe: bool = false;
+
+        // Cap the scan to the 64-bit user-mode address space WoW would
+        // realistically occupy (8 TiB upper bound; Windows user-mode is
+        // typically 128 TiB but WoW images live in the low region).
+        let scan_ceiling: usize = 0x0000_8000_0000_0000;
+
+        loop {
+            if addr >= scan_ceiling {
+                break;
+            }
+            let result = unsafe {
+                VirtualQueryEx(
+                    process_handle,
+                    addr as *const _,
+                    &mut mbi,
+                    mbi_size,
+                )
+            };
+            if result == 0 {
+                break;
+            }
+            let region_base = mbi.BaseAddress as usize;
+            let region_size = mbi.RegionSize;
+            let alloc_base = mbi.AllocationBase as usize;
+
+            if mbi.State == MEM_COMMIT
+                && mbi.Type == MEM_IMAGE
+                && alloc_base != 0
+            {
+                if alloc_base != current_alloc_base {
+                    // Starting a new allocation — finalize the previous.
+                    if current_is_pe
+                        && current_extent >= lower
+                        && current_extent <= upper
+                    {
+                        return Some(current_alloc_base);
+                    }
+                    current_alloc_base = alloc_base;
+                    current_extent = 0;
+                    // Probe MZ at AllocationBase
+                    let mut mz = [0u8; 2];
+                    let mut br: usize = 0;
+                    let ok = unsafe {
+                        ReadProcessMemory(
+                            process_handle,
+                            alloc_base as *const _,
+                            mz.as_mut_ptr() as *mut _,
+                            mz.len(),
+                            &mut br,
+                        )
+                    };
+                    current_is_pe = ok != 0 && br == 2 && mz == [b'M', b'Z'];
+                    last_alloc_base = alloc_base;
+                }
+                current_extent += region_size;
+            } else if alloc_base != current_alloc_base
+                && current_alloc_base != 0
+            {
+                // Region for a different (or no) allocation — finalize.
+                if current_is_pe
+                    && current_extent >= lower
+                    && current_extent <= upper
+                {
+                    return Some(current_alloc_base);
+                }
+                current_alloc_base = 0;
+                current_extent = 0;
+                current_is_pe = false;
+            }
+            let _ = last_alloc_base; // silence unused
+
+            // Advance past this region.
+            let next = region_base.saturating_add(region_size);
+            if next <= addr {
+                break;
+            }
+            addr = next;
+        }
+
+        // Finalize the trailing allocation.
+        if current_is_pe
+            && current_extent >= lower
+            && current_extent <= upper
+        {
+            return Some(current_alloc_base);
+        }
+        None
+    }
+
+    /// Read a section's worth of bytes from the target process.
+    ///
+    /// First attempts a single ReadProcessMemory. If that fails
+    /// (typically ERROR_ACCESS_DENIED on Wine when an Arxan-decrypted
+    /// `.text` page is mapped PAGE_EXECUTE without read permission),
+    /// walks the section page-by-page, temporarily flipping each
+    /// region to PAGE_EXECUTE_READ via VirtualProtectEx, reading, and
+    /// restoring the original protection. Pages that remain unreadable
+    /// (e.g. PAGE_NOACCESS guard pages, or never-committed BSS tail)
+    /// are zero-filled in the output buffer.
+    fn read_section_with_protect_fallback(
+        process_handle: HANDLE,
+        section_base: usize,
+        section_size: usize,
+        section_name: &str,
+        verbose: bool,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut buffer = vec![0u8; section_size];
+
+        // Fast path: one big read.
+        let mut bytes_read: usize = 0;
+        let ok = unsafe {
+            ReadProcessMemory(
+                process_handle,
+                section_base as *const _,
+                buffer.as_mut_ptr() as *mut _,
+                section_size,
+                &mut bytes_read,
+            )
+        };
+        if ok != 0 && bytes_read == section_size {
+            return Ok(buffer);
+        }
+
+        if verbose {
+            let err = io::Error::last_os_error();
+            println!(
+                "  Bulk ReadProcessMemory partial/failed for {section_name} \
+                 ({bytes_read}/{section_size} bytes, error: {err}). Falling back \
+                 to per-region read with VirtualProtectEx."
+            );
+        }
+
+        // Fallback: walk the section page-by-page, bumping protection
+        // as needed. Track unreadable regions for diagnostic output.
+        let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+        let section_end = section_base + section_size;
+        let mut cursor = section_base;
+        let mut total_read: usize = 0;
+        let mut total_unreadable: usize = 0;
+        let mut protect_flips: usize = 0;
+
+        while cursor < section_end {
+            let qres = unsafe {
+                VirtualQueryEx(
+                    process_handle,
+                    cursor as *const _,
+                    &mut mbi,
+                    mbi_size,
+                )
+            };
+            if qres == 0 {
+                // Treat unmapped tail as zero-fill.
+                total_unreadable += section_end - cursor;
+                break;
+            }
+            let region_base = mbi.BaseAddress as usize;
+            let region_end = region_base.saturating_add(mbi.RegionSize);
+            let read_from = cursor.max(region_base);
+            let read_to = section_end.min(region_end);
+            let read_len = read_to.saturating_sub(read_from);
+
+            if read_len == 0 {
+                // Pathological: advance to avoid infinite loop.
+                cursor = region_end.max(cursor + 0x1000);
+                continue;
+            }
+
+            if mbi.State != MEM_COMMIT {
+                // Uncommitted (reserved or free) — zero-fill in buffer.
+                total_unreadable += read_len;
+                cursor = read_to;
+                continue;
+            }
+
+            let buf_off = read_from - section_base;
+            let mut br: usize = 0;
+            let mut ok2 = unsafe {
+                ReadProcessMemory(
+                    process_handle,
+                    read_from as *const _,
+                    buffer[buf_off..buf_off + read_len].as_mut_ptr() as *mut _,
+                    read_len,
+                    &mut br,
+                )
+            };
+
+            if ok2 == 0 || br < read_len {
+                // Bump protection to PAGE_EXECUTE_READ for the region
+                // and retry.
+                let mut old_protect: u32 = 0;
+                let protect_ok = unsafe {
+                    VirtualProtectEx(
+                        process_handle,
+                        read_from as *mut _,
+                        read_len,
+                        PAGE_EXECUTE_READ,
+                        &mut old_protect,
+                    )
+                };
+                if protect_ok != 0 {
+                    protect_flips += 1;
+                    br = 0;
+                    ok2 = unsafe {
+                        ReadProcessMemory(
+                            process_handle,
+                            read_from as *const _,
+                            buffer[buf_off..buf_off + read_len].as_mut_ptr() as *mut _,
+                            read_len,
+                            &mut br,
+                        )
+                    };
+                    // Restore original protection (best-effort).
+                    let mut tmp: u32 = 0;
+                    unsafe {
+                        VirtualProtectEx(
+                            process_handle,
+                            read_from as *mut _,
+                            read_len,
+                            old_protect,
+                            &mut tmp,
+                        );
+                    }
+                }
+            }
+
+            if ok2 != 0 && br > 0 {
+                total_read += br;
+                if br < read_len {
+                    total_unreadable += read_len - br;
+                }
+            } else {
+                total_unreadable += read_len;
+            }
+
+            cursor = read_to;
+        }
+
+        if verbose {
+            println!(
+                "  Per-region read for {section_name}: {total_read} bytes \
+                 readable, {total_unreadable} bytes zero-filled, \
+                 {protect_flips} protection flips"
+            );
+        }
+
+        if total_read == 0 {
+            return Err(format!(
+                "ReadProcessMemory failed for section {section_name}: \
+                 no readable bytes recovered (section_base=0x{:X}, size={})",
+                section_base, section_size
+            )
+            .into());
+        }
+
+        Ok(buffer)
     }
 
     fn wait_for_decryption(
