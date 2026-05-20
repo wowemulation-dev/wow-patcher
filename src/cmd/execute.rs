@@ -9,9 +9,7 @@ use crate::patterns::{
     crypto_ed_public_key_pattern, portal_pattern, version_url_pattern, version_url_v2_pattern,
     version_url_v3_pattern,
 };
-use crate::platform::{
-    detect_client_type, extract_version, extract_version_fallback, remove_codesigning_signature,
-};
+use crate::platform::{detect_client_type, extract_version, remove_codesigning_signature};
 use crate::portal_domain::PortalDomain;
 use crate::trinity::{create_url_replacement, get_cdns_url, get_unified_api_url, get_version_url};
 use std::fs;
@@ -87,7 +85,7 @@ pub fn execute_patch(
     let client_type = detect_client_type(input_path.to_str().unwrap_or(""));
 
     // Extract version information
-    let version = extract_version(input_path).or_else(|| extract_version_fallback(input_path));
+    let version = extract_version(input_path);
 
     if let Some(ref v) = version {
         if verbose {
@@ -301,7 +299,7 @@ pub fn execute_patch(
         }
 
         temp_data = data.clone();
-        let build_num = version.as_ref().map(|v| v.build as u32);
+        let build_num = version.as_ref().map(|v| v.build);
         let mut version_url_found = false;
         let mut version_url_pattern_name = "";
 
@@ -643,7 +641,7 @@ pub fn execute_patch(
     }
 
     // Version URL patching - try v1 pattern first, then v2, then v3
-    let build_num = version.as_ref().map(|v| v.build as u32);
+    let build_num = version.as_ref().map(|v| v.build);
     let mut version_url_patched = false;
     let mut version_url_pattern_name = "";
 

@@ -6,11 +6,12 @@ pub struct Version {
     pub major: u16,
     pub minor: u16,
     pub patch: u16,
-    pub build: u16,
+    /// Build number. 32-bit because recent WoW builds exceed u16 (e.g. 66290).
+    pub build: u32,
 }
 
 impl Version {
-    pub fn new(major: u16, minor: u16, patch: u16, build: u16) -> Self {
+    pub fn new(major: u16, minor: u16, patch: u16, build: u32) -> Self {
         Self {
             major,
             minor,
@@ -124,80 +125,52 @@ pub fn remove_codesigning_signature(_path: &str) -> Result<(), crate::errors::Wo
     Ok(())
 }
 
-/// Extract version information from WoW executable
+/// Extract version information from a WoW executable.
+///
+/// Only Windows PE binaries are supported. Mach-O parsing is not implemented.
 pub fn extract_version(exe_path: &Path) -> Option<Version> {
     let data = std::fs::read(exe_path).ok()?;
-    let obj = Object::parse(&data).ok()?;
-
-    match obj {
+    match Object::parse(&data).ok()? {
         Object::PE(pe) => extract_pe_version(&pe),
-        Object::Mach(mach) => extract_macho_version(&mach, &data),
         _ => None,
     }
 }
 
-/// Extract version from PE file (Windows executables)
-fn extract_pe_version(_pe: &goblin::pe::PE) -> Option<Version> {
-    // PE files store version info in the VS_VERSIONINFO resource
-    // For now, we'll try to find version patterns in the binary
-    // The version is usually stored as 4 16-bit values in the VS_FIXEDFILEINFO structure
+/// Extract version from PE file via the VS_VERSIONINFO resource.
+fn extract_pe_version(pe: &goblin::pe::PE) -> Option<Version> {
+    let version_info = pe.resource_data.as_ref()?.version_info.as_ref()?;
 
-    // This is a simplified approach - in production, we'd properly parse the resource section
-    // For WoW executables, the version is typically stored in a consistent location
-    // We'll return None for now and rely on the fallback pattern matching
-
-    None
-}
-
-/// Extract version from Mach-O file (macOS executables)
-fn extract_macho_version(mach: &goblin::mach::Mach, _data: &[u8]) -> Option<Version> {
-    match mach {
-        goblin::mach::Mach::Binary(_binary) => {
-            // Look for LC_VERSION_MIN_* or LC_BUILD_VERSION commands
-            // These contain SDK version but not necessarily app version
-
-            // For WoW on macOS, version info is typically in the Info.plist
-            // or embedded as data in the binary
-            // This is a simplified implementation
-            None
-        }
-        goblin::mach::Mach::Fat(_fat) => {
-            // For fat binaries, we would need to iterate through architectures
-            // For now, we'll rely on the fallback pattern matching
-            None
-        }
+    // Prefer the StringFileInfo "FileVersion" entry: WoW Classic variants
+    // (e.g. MoP 5.5.x) carry their gameplay version here in human form
+    // ("5.5.3.66290"), while VsFixedFileInfo holds the underlying retail
+    // engine version and would mislead callers.
+    if let Some(s) = version_info.string_info.file_version()
+        && let Some(v) = parse_dotted_version(&s)
+    {
+        return Some(v);
     }
-}
-
-/// Fallback version extraction using pattern matching
-/// This searches for common version string patterns in the binary
-pub fn extract_version_fallback(exe_path: &Path) -> Option<Version> {
-    use std::fs::File;
-    use std::io::{BufReader, Read};
-
-    let file = File::open(exe_path).ok()?;
-    let mut reader = BufReader::new(file);
-    let mut buffer = Vec::new();
-    reader.read_to_end(&mut buffer).ok()?;
-
-    // Common version patterns in WoW executables
-    // Look for patterns like "10.2.5.53584" or "3.4.3.51666"
-    let version_regex = regex::Regex::new(r"(\d{1,2})\.(\d{1,2})\.(\d{1,2})\.(\d{5,6})").ok()?;
-
-    // Convert buffer to string, ignoring non-UTF8 sequences
-    let text = String::from_utf8_lossy(&buffer);
-
-    // Find the first matching version pattern
-    if let Some(captures) = version_regex.captures(&text) {
-        let major = captures.get(1)?.as_str().parse().ok()?;
-        let minor = captures.get(2)?.as_str().parse().ok()?;
-        let patch = captures.get(3)?.as_str().parse().ok()?;
-        let build = captures.get(4)?.as_str().parse().ok()?;
-
-        return Some(Version::new(major, minor, patch, build));
+    if let Some(s) = version_info.string_info.product_version()
+        && let Some(v) = parse_dotted_version(&s)
+    {
+        return Some(v);
     }
 
-    None
+    let fixed = version_info.fixed_info?;
+    Some(Version::new(
+        (fixed.file_version_ms >> 16) as u16,
+        (fixed.file_version_ms & 0xFFFF) as u16,
+        (fixed.file_version_ls >> 16) as u16,
+        fixed.file_version_ls & 0xFFFF,
+    ))
+}
+
+fn parse_dotted_version(s: &str) -> Option<Version> {
+    let mut parts = s.split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = parts.next()?.trim().parse().ok()?;
+    let patch = parts.next()?.trim().parse().ok()?;
+    let build = parts.next()?.trim().parse().ok()?;
+    Some(Version::new(major, minor, patch, build))
 }
 
 #[cfg(test)]
@@ -249,6 +222,22 @@ mod tests {
         assert!(!ClientType::Classic.uses_ed25519());
         assert!(!ClientType::ClassicEra.uses_ed25519());
         assert!(ClientType::Unknown.uses_ed25519());
+    }
+
+    #[test]
+    fn test_parse_dotted_version_build_exceeds_u16() {
+        // MoP Classic 5.5.3.66290 — build > u16::MAX. Regression for
+        // earlier truncation when Version.build was u16.
+        assert_eq!(
+            parse_dotted_version("5.5.3.66290"),
+            Some(Version::new(5, 5, 3, 66290))
+        );
+        assert_eq!(
+            parse_dotted_version("4.4.2.60895"),
+            Some(Version::new(4, 4, 2, 60895))
+        );
+        assert_eq!(parse_dotted_version("Version 5.5.3"), None);
+        assert_eq!(parse_dotted_version("5.5.3"), None);
     }
 
     #[test]
