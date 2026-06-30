@@ -1,7 +1,7 @@
 # Classic WoW Patcher
 
-A World of Warcraft client patcher written in Rust that enables retail WoW clients
-to connect to TrinityCore-based private servers.
+A World of Warcraft client patcher written in Rust that lets you run the
+WoW client on your own computer and connect to a personal server at home.
 
 <div align="center">
 
@@ -20,17 +20,34 @@ Part of the [WoW Emulation project](https://github.com/wowemulation-dev).
 
 The patcher modifies WoW executables by redirecting the login portal,
 replacing cryptographic keys, and injecting a custom certificate bundle
-to enable connecting to private servers. It works through binary patching
-without in-client memory modifications.
+to enable connecting to a server you control. You must own the client and
+expansions you want to play.
+
+## How It Works
+
+The patcher modifies your WoW executable by:
+
+1. **Redirecting the login portal** - Replaces `.actual.battle.net` with
+   `.localhost`, pointing the client at your own server.
+2. **Replacing the RSA modulus** - Updates the 256-byte RSA key so the
+   client trusts your certificate bundle instead of Blizzard's. The bundle
+   tells the client which TLS certificates to accept, and the modulus proves
+   the bundle itself hasn't been tampered with.
+3. **Rewriting the bundle URL (older clients)** - For builds that download the
+   bundle at startup (1.13.2), replaces Blizzard's download URL with your own.
+4. **Updating Ed25519 keys** - For supported clients, replaces the Ed25519
+   public key (32 bytes).
+
+The patcher detects the client type automatically and applies the right
+patches for your version.
 
 ## Features
 
-- Binary patching without in-client memory modifications
-- Cross-platform support (Windows, macOS, Linux)
-- Support for multiple WoW client versions (Classic, Classic Era)
+- No in-client memory modifications (patches files on disk)
+- Supports Windows, macOS, and Linux
+- Works with WoW Classic and Classic Era
 - Dry-run mode for previewing changes
 - Automatic WoW executable detection on macOS
-- Code signing removal for macOS compatibility
 
 ## Installation
 
@@ -49,54 +66,24 @@ cargo build --release
 
 ## Usage
 
-### Basic Usage
+Run `wow-patcher --help` to see all options. The most common invocations:
 
 ```bash
-# Windows - basic patching
+# Windows
 wow-patcher -l "C:\Program Files\World of Warcraft\_retail_\Wow.exe"
 
-# macOS - auto-detect WoW location (default)
+# macOS (auto-detects WoW location)
 wow-patcher
 
-# Linux - explicit path required
+# Linux
 wow-patcher -l ./Wow.exe -o ./wow-private
 
-# Preview changes without modifying files (dry run)
+# Preview changes without modifying files
 wow-patcher --dry-run -l ./Wow.exe
 ```
 
-### Command-Line Options
-
-```
-Usage: wow-patcher [OPTIONS] [COMMAND]
-
-Commands:
-  version        Print version information
-  launch         Launch the WoW client with runtime-mode patches (Windows/Wine)
-  dump-text      Dump decrypted .text section (Windows/Wine only)
-  dump-sections  Dump PE sections from a running protected client
-  help           Print this message or the help of the given subcommand(s)
-
-Options:
-  -l, --warcraft-exe <FILE>         Path to the WoW executable (auto-detected on macOS)
-  -o, --output-file <FILE>          Output filename [default: Arctium]
-  -n, --dry-run                      Preview changes without modifying files
-  -s, --strip-binary-codesign       Remove macOS code signing
-  -v, --verbose                      Enable verbose output
-      --rsa-file <FILE>              Custom RSA modulus file (256 bytes binary)
-      --rsa-hex <HEX>                Custom RSA modulus as hex string (512 hex characters)
-      --ed25519-file <FILE>          Custom Ed25519 public key file (32 bytes binary)
-      --ed25519-hex <HEX>            Custom Ed25519 public key as hex string (64 hex characters)
-      --version-url <URL>            Custom version URL for CDN redirection
-      --cdns-url <URL>               Custom CDNs URL for CDN redirection
-      --bgs-portal-domain <DOMAIN>   Portal hostname suffix (default: wowemu.dev)
-      --cert-bundle <FILE>           Cert bundle file for embedded-slot injection
-      --cert-bundle-url <URL>        Cert bundle download URL (for builds that fetch it)
-  -h, --help                         Print help information
-  -V, --version                      Print version information
-```
-
-### Platform-Specific Examples
+<details>
+<summary>Platform-specific paths</summary>
 
 #### Windows
 
@@ -114,7 +101,7 @@ wow-patcher -l "C:\Program Files (x86)\World of Warcraft\_retail_\Wow.exe" -o "C
 # Auto-detect WoW and keep code signing (not recommended)
 wow-patcher -s=false
 
-# Explicit path with default code signing removal
+# Explicit path
 wow-patcher -l "/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
 
 # Custom output name
@@ -131,89 +118,43 @@ wow-patcher -l /opt/wow/Wow.exe -o /home/user/games/wow-tc
 wow-patcher -l "$HOME/.wine/drive_c/Program Files/World of Warcraft/_retail_/Wow.exe" -o ./WowPrivate.exe
 ```
 
-### Advanced Options
+</details>
 
-#### Custom Cryptographic Keys
+<details>
+<summary>Custom server / operator options</summary>
 
-If you're connecting to a server that uses different cryptographic keys than standard TrinityCore:
+If you run your own server with custom keys or CDN URLs:
 
 ```bash
-# Using custom RSA modulus from a file (256 bytes)
+# Custom RSA modulus from a file (256 bytes)
 wow-patcher -l ./Wow.exe --rsa-file ./custom_rsa.bin
 
-# Using custom RSA modulus as hex string (512 hex characters)
-wow-patcher -l ./Wow.exe --rsa-hex "91D59BB7D4E183A5EC3710..." # (512 hex chars total)
-
-# Using custom Ed25519 public key from a file (32 bytes)
-wow-patcher -l ./Wow.exe --ed25519-file ./custom_ed25519.bin
-
-# Using custom Ed25519 public key as hex string (64 hex characters)
-wow-patcher -l ./Wow.exe --ed25519-hex "15D618BD7DB577BD..." # (64 hex chars total)
-
-# Combining custom keys
-wow-patcher -l ./Wow.exe --rsa-file ./rsa.bin --ed25519-hex "15D618BD..."
-```
-
-#### CDN Redirection
-
-Redirect the client to custom CDN servers for game data and patches:
-
-```bash
-# Custom version server
+# Custom CDN URLs
 wow-patcher -l ./Wow.exe --version-url "http://my-cdn.example.com/versions"
 
-# Custom CDNs server
-wow-patcher -l ./Wow.exe --cdns-url "http://my-cdn.example.com/cdns"
+# Custom portal domain
+wow-patcher -l ./Wow.exe --bgs-portal-domain bgs.corp
 
-# Both CDN URLs
-wow-patcher -l ./Wow.exe --version-url "http://cdn.myserver.com/versions" --cdns-url "http://cdn.myserver.com/cdns"
+# Inject a custom cert bundle
+wow-patcher -l ./Wow.exe --rsa-file bundle-signing-modulus.bin \
+    --cert-bundle data/cert-bundle/bgs-key-fingerprint
 ```
 
-#### Development Options
+See [docs/src/configuration.md](docs/src/configuration.md) for details.
 
-```bash
-# Enable verbose output for debugging
-wow-patcher -l ./Wow.exe -v
+</details>
 
-# Combine with dry-run to preview all changes
-wow-patcher -l ./Wow.exe -v --dry-run --version-url "http://local.test/versions"
+<details>
+<summary>Requirements</summary>
 
-# Test custom keys without applying changes
-wow-patcher -l ./Wow.exe --dry-run --rsa-file ./test_rsa.bin --ed25519-file ./test_ed25519.bin
-```
+This tool will only work if you:
 
-#### Version Command
+1. Are connecting to a server with a valid TLS certificate that chains to a
+   trusted root CA in your system trust store
+2. Are using a hostname (not an IP address) for your portal cvar setting in
+   `WTF/Config.wtf`
 
-```bash
-# Show basic version information
-wow-patcher version
-
-# Show detailed version information with build metadata
-wow-patcher version --detailed
-```
-
-## Requirements
-
-This tool will ONLY work if you:
-
-1. Are connecting to a server with a valid TLS certificate that chains to a trusted root CA in your system trust store
-2. Are using a hostname and not an IP address for your portal cvar setting in `WTF/Config.wtf`
-3. Are connecting to a server that uses the same gamecrypto key as TrinityCore
-
-## How It Works
-
-The patcher modifies your WoW executable by:
-
-1. **Redirecting the login portal** - Replaces `.actual.battle.net` with `.localhost` (NUL-padded),
-   pointing the client at your private server.
-2. **Replacing the RSA modulus** - Updates the 256-byte RSA key so the client trusts your
-   certificate bundle instead of Blizzard's. The bundle tells the client which TLS
-   certificates to accept, and the modulus proves the bundle itself hasn't been tampered with.
-3. **Rewriting the bundle URL (older clients)** - For builds that download the bundle at
-   startup (1.13.2), replaces Blizzard's download URL with your own.
-4. **Updating Ed25519 keys** - For supported clients, replaces the Ed25519 public key (32 bytes)
-
-The patcher automatically detects the client type (Retail vs Classic Era) and applies the appropriate patches.
+</details>
 
 ## Building from Source
 
@@ -222,30 +163,12 @@ The patcher automatically detects the client type (Retail vs Classic Era) and ap
 - Rust 1.92.0 or higher
 - Cargo (included with Rust)
 
-### Development
-
-```bash
-# Run in development mode
-cargo run -- -l /path/to/Wow.exe
-
-# Run tests
-cargo test
-
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy
-
-# Build documentation
-cargo doc --open
-```
-
 ## FAQ
 
 **Q: Why does this generate an exe with the name `Arctium` by default?**
 
-**A:** In the event your client crashes, this helps Blizzard filter out the private server noise from their automated client telemetry.
+**A:** In the event your client crashes, this helps Blizzard filter out
+community-server traffic from their automated client telemetry.
 
 **Q: Do I need to remove code signing on macOS?**
 
@@ -261,9 +184,12 @@ xattr -dr com.apple.quarantine /path/to/wow-patcher
 
 If you built from source this is not needed.
 
-**Q: Can I use this with any private server?**
+**Q: Can I use this with any server?**
 
-**A:** No, this only works with TrinityCore-based servers that use the standard TrinityCore cryptographic keys.
+**A:** The patcher ships with TrinityCore-compatible defaults. If your server
+uses custom keys or a custom certificate bundle, use `--rsa-file`,
+`--cert-bundle`, and related flags. See `wow-patcher --help` or
+[docs/src/configuration.md](docs/src/configuration.md).
 
 ## Acknowledgments
 
