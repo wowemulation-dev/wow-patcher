@@ -13,6 +13,49 @@ signed bundle JSON.
 pip install cryptography
 ```
 
+## How the client uses certificates
+
+The WoW client needs to trust two things before it will connect to your
+server: the server itself, and the file that tells it which servers to
+trust. It handles these as two separate checks.
+
+### Verifying the server (TLS)
+
+When the client connects to the login server, the server presents a
+certificate -- like showing an ID card. The client looks up which
+certificate authorities it trusts and checks whether the server's
+certificate was signed by one of them.
+
+The list of trusted authorities lives in the **cert bundle**, a small file
+containing the fingerprint of your TLS CA. The bundle tells the client:
+"allow connections to servers whose certificate was issued by this CA."
+
+### Verifying the bundle itself (signature)
+
+This creates a chicken-and-egg problem: how does the client know the bundle
+file is genuine? If anyone could swap in a different CA fingerprint, they
+could trick the client into trusting a malicious server.
+
+The solution is a second, separate check. The bundle file carries a digital
+signature at the end -- like a tamper-proof seal. The client verifies this
+signature against a key that is **hardcoded in the game binary**. By
+replacing this key during patching, you make the client accept bundles
+signed by you instead of Blizzard.
+
+### How the client gets the bundle
+
+Older builds (1.13.2) **download** the bundle from a Blizzard URL at
+startup. Patching rewrites that URL to point at your own server. You serve
+the bundle file over HTTP.
+
+Newer builds (1.14.x / 2.5.3) have the bundle **embedded** directly inside
+the game executable. Patching replaces those bytes in-place. No HTTP
+serving needed.
+
+In both cases the signature check happens the same way: the client
+verifies the bundle against the modulus injected into the binary via
+`--rsa-file`.
+
 ## Key architecture: two separate keys
 
 The cert bundle uses two distinct keypairs that serve different purposes
