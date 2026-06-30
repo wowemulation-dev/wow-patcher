@@ -22,6 +22,9 @@ wow-patcher -l /path/to/Wow.exe -o Wow-patched.exe
 |----------|-------------|-----------|----------|
 | `-l, --warcraft-exe` | Path to WoW executable | Yes (auto-detected on macOS) | - |
 | `-o, --output-file` | Output file path | No | `Arctium` |
+| `--bgs-portal-domain` | Portal hostname suffix (max 10 bytes) | No | `wowemu.dev` |
+| `--cert-bundle` | Cert bundle file to embed (≤ 32761 bytes) | No | - |
+| `--cert-bundle-url` | Cert bundle download URL (≤ 59 bytes) | No | - |
 
 ## Optional Flags
 
@@ -64,6 +67,35 @@ Replace version and CDN URLs:
 wow-patcher -l Wow.exe -o Wow-patched.exe \
   --version-url "https://my-cdn.example.com/versions" \
   --cdns-url "https://my-cdn.example.com/cdns"
+```
+
+## Cert Bundle
+
+For clients that download the bundle at startup (1.13.2), redirect
+the download URL:
+
+```bash
+wow-patcher -l Wow.exe -o Wow-patched.exe \
+  --rsa-file bundle-signing-modulus.bin \
+  --cert-bundle-url "http://my-server.example.com/bnet/bundle"
+```
+
+For clients with an embedded bundle (1.14.x / 2.5.3), inject a custom
+bundle:
+
+```bash
+wow-patcher -l Wow.exe -o Wow-patched.exe \
+  --rsa-file bundle-signing-modulus.bin \
+  --cert-bundle data/cert-bundle/bgs-key-fingerprint
+```
+
+## Portal Domain
+
+Override the login portal hostname:
+
+```bash
+wow-patcher -l Wow.exe -o Wow-patched.exe \
+  --bgs-portal-domain bgs.corp
 ```
 
 ## macOS Code Signing

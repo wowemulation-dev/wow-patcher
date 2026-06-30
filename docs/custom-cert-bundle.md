@@ -148,10 +148,10 @@ Run it. The two relevant binary patches:
   (for 1.14.x / 2.5.3 builds). The client reads `RootCAPublicKeys` to
   determine which CAs to trust for TLS.
 
-## Step 3: Serve the cert bundle
+## Step 3: Serve the cert bundle (1.13.2 and remote builds only)
 
-The patched client fetches the bundle from the URL you specified
-(`http://wowemu.dev/bnet/bundle`). Set up a simple HTTP server:
+If your client downloads the bundle at startup (1.13.2 or builds where
+you used `--cert-bundle-url`), serve the file over HTTP:
 
 ```bash
 # Quick test with Python

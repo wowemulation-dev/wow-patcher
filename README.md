@@ -18,10 +18,10 @@ to connect to TrinityCore-based private servers.
 
 Part of the [WoW Emulation project](https://github.com/wowemulation-dev).
 
-The patcher modifies WoW executables by replacing Battle.net portal connections,
-RSA authentication keys, and Ed25519 public keys to enable connecting to
-TrinityCore-based private servers. It works through binary patching without
-in-client memory modifications.
+The patcher modifies WoW executables by redirecting the login portal,
+replacing cryptographic keys, and injecting a custom certificate bundle
+to enable connecting to private servers. It works through binary patching
+without in-client memory modifications.
 
 ## Features
 
@@ -71,14 +71,17 @@ wow-patcher --dry-run -l ./Wow.exe
 Usage: wow-patcher [OPTIONS] [COMMAND]
 
 Commands:
-  version  Print version information
-  help     Print this message or the help of the given subcommand(s)
+  version        Print version information
+  launch         Launch the WoW client with runtime-mode patches (Windows/Wine)
+  dump-text      Dump decrypted .text section (Windows/Wine only)
+  dump-sections  Dump PE sections from a running protected client
+  help           Print this message or the help of the given subcommand(s)
 
 Options:
   -l, --warcraft-exe <FILE>         Path to the WoW executable (auto-detected on macOS)
   -o, --output-file <FILE>          Output filename [default: Arctium]
   -n, --dry-run                      Preview changes without modifying files
-  -s, --strip-binary-codesign       Remove macOS code signing [default: true]
+  -s, --strip-binary-codesign       Remove macOS code signing
   -v, --verbose                      Enable verbose output
       --rsa-file <FILE>              Custom RSA modulus file (256 bytes binary)
       --rsa-hex <HEX>                Custom RSA modulus as hex string (512 hex characters)
@@ -86,6 +89,9 @@ Options:
       --ed25519-hex <HEX>            Custom Ed25519 public key as hex string (64 hex characters)
       --version-url <URL>            Custom version URL for CDN redirection
       --cdns-url <URL>               Custom CDNs URL for CDN redirection
+      --bgs-portal-domain <DOMAIN>   Portal hostname suffix (default: wowemu.dev)
+      --cert-bundle <FILE>           Cert bundle file for embedded-slot injection
+      --cert-bundle-url <URL>        Cert bundle download URL (for builds that fetch it)
   -h, --help                         Print help information
   -V, --version                      Print version information
 ```

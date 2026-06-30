@@ -24,9 +24,11 @@ wow-patcher modifies WoW client binaries on disk to enable connections to privat
 
 1. Reads the WoW executable
 2. Detects client type and version
-3. Replaces embedded URLs (portal, version, CDNs)
-4. Replaces cryptographic keys (RSA modulus, Ed25519 public key)
-5. Writes patched executable to new file
+3. Replaces embedded URLs (portal, version, CDNs, cert bundle download)
+4. Replaces cryptographic keys (RSA modulus for bundle signature
+   verification, Ed25519 public key)
+5. Injects a custom cert bundle into builds that embed one
+6. Writes patched executable to new file
 
 ## Quick Start
 

@@ -4,14 +4,19 @@
 
 ### What Keys Do
 
-wow-patcher replaces cryptographic keys embedded in the WoW executable. These keys are used to verify server certificates and establish encrypted connections.
+wow-patcher replaces cryptographic keys embedded in the WoW executable.
+The RSA modulus verifies the cert bundle signature; the bundle itself
+lists which TLS CAs the client trusts. The Ed25519 key is used for
+alternative signature verification.
 
 ### Key Types
 
 #### RSA Modulus
 
 - **Size**: 256 bytes
-- **Purpose**: Verifies server certificate during TLS handshake
+- **Purpose**: Verifies the cert bundle's PKCS#1 v1.5 signature.
+  The client uses this modulus to confirm the bundle file is
+  authentic before trusting the CA fingerprints inside it.
 - **Required**: Yes
 
 #### Ed25519 Public Key
@@ -82,21 +87,43 @@ Library accepts keys via `Patcher` builder methods:
 
 `KeyConfig` is also available for direct key management via `KeyConfig::new()`, `KeyConfig::from_hex()`, and `KeyConfig::from_files()`.
 
-## CDN URLs
+## Portal Domain
 
-### What CDNs Do
+### What the Portal Domain Does
 
-CDN URLs tell the client where to download game updates and configuration files.
+The patcher rewrites the BGS login portal hostname suffix from
+`.actual.battle.net` to `.actual.<your-domain>`. The default target
+is `wowemu.dev` (byte-identical length to `battle.net`, so no NUL
+padding is needed). Shorter domains up to 10 bytes work via NUL
+padding. This is controlled by `--bgs-portal-domain` (or the
+`WOW_BGS_PORTAL_DOMAIN` env var).
+
+## Cert Bundle
+
+### What the Cert Bundle Does
+
+The cert bundle is a signed JSON file that tells the client which
+TLS certificate authorities to trust (`RootCAPublicKeys`). Two
+patching mechanisms exist depending on client version:
+
+- **Embedded (1.14.x / 2.5.3)**: The bundle is baked into `.rdata`.
+  `--cert-bundle` replaces those bytes directly.
+- **Remote (1.13.2)**: The client downloads the bundle at startup.
+  `--cert-bundle-url` rewrites the download URL.
+
+Both mechanisms require the RSA modulus to be patched via `--rsa-file`
+so the client trusts the bundle's signature.
+
+Generate a bundle with `scripts/gen-cert-bundle.py`. See
+`docs/custom-cert-bundle.md` for the full guide.
 
 ### URL Types
 
 #### Portal URL
 
-- **Default**: `https://us.actual.battle.net`
-- **Replaced with**: Null bytes (disabled)
-- **Required**: Yes
-
-The patcher disables the portal URL to prevent the client from connecting to Blizzard's servers.
+The patcher redirects the portal connection by rewriting the
+`.actual.battle.net` suffix. The default target domain is
+`wowemu.dev`.
 
 #### Version URL
 
