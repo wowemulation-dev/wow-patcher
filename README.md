@@ -198,9 +198,14 @@ This tool will ONLY work if you:
 
 The patcher modifies your WoW executable by:
 
-1. **Removing Battle.net portal connections** - Replaces `.actual.battle.net` with empty bytes
-2. **Replacing RSA authentication keys** - Updates the RSA modulus to TrinityCore's 256-byte key
-3. **Updating Ed25519 keys** - For supported clients, replaces the Ed25519 public key (32 bytes)
+1. **Redirecting the login portal** - Replaces `.actual.battle.net` with `.localhost` (NUL-padded),
+   pointing the client at your private server.
+2. **Replacing the RSA modulus** - Updates the 256-byte RSA key so the client trusts your
+   certificate bundle instead of Blizzard's. The bundle tells the client which TLS
+   certificates to accept, and the modulus proves the bundle itself hasn't been tampered with.
+3. **Rewriting the bundle URL (older clients)** - For builds that download the bundle at
+   startup (1.13.2), replaces Blizzard's download URL with your own.
+4. **Updating Ed25519 keys** - For supported clients, replaces the Ed25519 public key (32 bytes)
 
 The patcher automatically detects the client type (Retail vs Classic Era) and applies the appropriate patches.
 
