@@ -57,7 +57,8 @@ lists which TLS CAs the client trusts.
 **Status**: Optional, skipped on builds without an embedded bundle
 
 **Note**: For builds that download the bundle at startup (1.13.2), use
-`--cert-bundle-url` to redirect the download URL instead.
+`--cert-bundle-url` to redirect the download URL instead. See the
+[certificate bundle guide](./custom-cert-bundle.md) for generation instructions.
 
 ### Cert Bundle URL
 
@@ -70,6 +71,9 @@ lists which TLS CAs the client trusts.
 (1.13.2, 1.14.x, 2.5.3 builds that fetch the bundle at startup).
 
 **Status**: Optional, skipped on builds without a bundle URL pattern
+
+**Note**: See the [certificate bundle guide](./custom-cert-bundle.md) for
+bundle generation and serving instructions.
 
 ### Ed25519 Public Key
 

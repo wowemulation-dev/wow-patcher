@@ -75,6 +75,7 @@ pub mod cli;
 pub mod cmd;
 pub mod errors;
 pub mod keys;
+pub mod patch_group;
 pub mod patcher;
 pub mod patterns;
 pub mod platform;
@@ -85,4 +86,5 @@ pub mod version;
 // Re-export the main API
 pub use errors::WowPatcherError;
 pub use keys::KeyConfig;
+pub use patch_group::PatchGroup;
 pub use patcher::Patcher;

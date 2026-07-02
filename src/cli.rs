@@ -1,5 +1,7 @@
 use crate::cert_bundle::CertBundleConfig;
+use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
+use crate::patch_group::parse_patch_groups;
 use crate::portal_domain::PortalDomain;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -127,6 +129,21 @@ pub struct Cli {
     /// portal hostname controlled by `--bgs-portal-domain`).
     #[arg(long = "cert-bundle-url", value_name = "URL", global = true)]
     pub cert_bundle_url: Option<String>,
+
+    /// Comma-separated list of patch groups to apply.
+    ///
+    /// Valid groups: all, rsa, ed25519, portal, version, cdns,
+    /// cert-bundle, cert-bundle-url.
+    ///
+    /// Default: all (every group). Use this to select a subset, e.g.
+    /// `--patches version,cdns` to only rewrite version and CDN URLs.
+    #[arg(
+        long = "patches",
+        value_name = "GROUPS",
+        default_value = "all",
+        global = true
+    )]
+    pub patches: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -474,6 +491,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            // Parse patch groups
+            let patches = parse_patch_groups(&cli.patches)
+                .map_err(|e| WowPatcherError::new(ErrorCategory::ValidationError, e))?;
+
             let input_path = PathBuf::from(&location);
             let output_path = PathBuf::from(cli.output.unwrap_or_else(|| "Arctium".to_string()));
 
@@ -485,6 +506,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli.cdns_url.as_deref(),
                 portal_domain,
                 cert_bundle,
+                patches,
                 cli.dry_run,
                 cli.sign,
                 cli.verbose,

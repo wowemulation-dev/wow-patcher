@@ -45,6 +45,7 @@ use crate::cert_bundle::CertBundleConfig;
 use crate::cmd::execute::execute_patch;
 use crate::errors::WowPatcherError;
 use crate::keys::KeyConfig;
+use crate::patch_group::PatchGroup;
 use crate::portal_domain::PortalDomain;
 use std::path::{Path, PathBuf};
 
@@ -68,6 +69,8 @@ pub struct Patcher {
     portal_domain: Option<PortalDomain>,
     /// Cert-bundle override (file + URL)
     cert_bundle: CertBundleConfig,
+    /// Which patch groups to apply (default: all)
+    patches: PatchGroup,
     /// Dry run mode (preview changes without modifying files)
     dry_run: bool,
     /// Strip macOS code signing
@@ -99,6 +102,7 @@ impl Patcher {
             cdns_url: None,
             portal_domain: None,
             cert_bundle: CertBundleConfig::default(),
+            patches: PatchGroup::all(),
             dry_run: false,
             strip_codesign: false,
             verbose: false,
@@ -363,6 +367,30 @@ impl Patcher {
         Ok(self)
     }
 
+    /// Select which patch groups to apply.
+    ///
+    /// Default: all groups (`PatchGroup::default_set()`).
+    /// Cert-bundle injection and cert-bundle-url are input-gated:
+    /// they only fire when `cert_bundle_from_file()` / `cert_bundle_url()`
+    /// have also been called.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use wow_patcher::{Patcher, PatchGroup};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// Patcher::new("Wow.exe")
+    ///     .patches(PatchGroup::VERSION | PatchGroup::CDNS)
+    ///     .patch()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn patches(mut self, groups: PatchGroup) -> Self {
+        self.patches = groups;
+        self
+    }
+
     /// Enable dry run mode (preview changes without modifying files).
     ///
     /// # Arguments
@@ -487,6 +515,7 @@ impl Patcher {
             self.cdns_url.as_deref(),
             portal_domain,
             self.cert_bundle,
+            self.patches,
             self.dry_run,
             self.strip_codesign,
             self.verbose,

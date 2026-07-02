@@ -5,3 +5,4 @@
 - [Library API](./library.md)
 - [Configuration](./configuration.md)
 - [Patches](./patches.md)
+- [Custom Certificate Bundle](./custom-cert-bundle.md)

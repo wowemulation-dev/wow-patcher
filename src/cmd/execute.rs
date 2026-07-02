@@ -4,6 +4,7 @@ use crate::binary::{
 use crate::cert_bundle::CertBundleConfig;
 use crate::errors::{ErrorCategory, WowPatcherError};
 use crate::keys::KeyConfig;
+use crate::patch_group::PatchGroup;
 use crate::patterns::{
     cdns_url_pattern, cert_bundle_pattern, cert_bundle_url_pattern, connect_to_modulus_pattern,
     crypto_ed_public_key_pattern, portal_pattern, version_url_pattern, version_url_v2_pattern,
@@ -31,11 +32,13 @@ pub fn execute_patch(
     cdns_url: Option<&str>,
     portal_domain: PortalDomain,
     cert_bundle: CertBundleConfig,
+    patches: PatchGroup,
     dry_run: bool,
     strip_codesign: bool,
     verbose: bool,
 ) -> Result<(), WowPatcherError> {
-    // Validate input file
+    // --- Input validation ---
+
     if !input_path.exists() {
         return Err(WowPatcherError::new(
             ErrorCategory::FileOperationError,
@@ -51,7 +54,6 @@ pub fn execute_patch(
         )
     })?;
 
-    // Validate file size
     const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
     if metadata.len() > MAX_FILE_SIZE {
         return Err(WowPatcherError::new(
@@ -95,6 +97,10 @@ pub fn execute_patch(
         println!("Unable to extract version from executable, using fallback URL");
     }
 
+    if verbose {
+        println!("Patch groups: {}", patches);
+    }
+
     // Read the file
     let mut data = fs::read(input_path).map_err(|e| {
         WowPatcherError::wrap(
@@ -104,58 +110,94 @@ pub fn execute_patch(
         )
     })?;
 
-    // Validate that all patterns are in patchable sections before proceeding
+    // --- Cross-group dependency checks ---
+
+    // Cert-bundle injection requires RSA: the bundle signature is verified
+    // against the modulus. If the user selected cert-bundle without RSA,
+    // the injected bundle won't validate at runtime.
+    if patches.contains(PatchGroup::CERT_BUNDLE)
+        && !patches.contains(PatchGroup::RSA)
+        && cert_bundle.bundle_bytes().is_some()
+        && verbose
+    {
+        println!("⚠️  CERT_BUNDLE selected without RSA — the injected bundle will not validate ");
+        println!(
+            "    against the stock RSA modulus. Add 'rsa' to --patches or provide an RSA key."
+        );
+    }
+
+    // Cert-bundle-group selected without --cert-bundle input: the flag
+    // is in the set but there's nothing to inject. Warn once.
+    if patches.contains(PatchGroup::CERT_BUNDLE) && cert_bundle.bundle_bytes().is_none() && verbose
+    {
+        println!(
+            "ℹ️  CERT_BUNDLE is in --patches but no --cert-bundle FILE was provided; skipped."
+        );
+    }
+    if patches.contains(PatchGroup::CERT_BUNDLE_URL)
+        && cert_bundle.download_url().is_none()
+        && verbose
+    {
+        println!(
+            "ℹ️  CERT_BUNDLE_URL is in --patches but no --cert-bundle-url was provided; skipped."
+        );
+    }
+
+    // --- Section validation (scoped to selected groups) ---
+
     let mut offsets_to_validate = Vec::new();
 
-    // Check portal pattern
-    if let Some(offset) = data.find_pattern(portal_pattern()) {
+    if patches.contains(PatchGroup::PORTAL)
+        && let Some(offset) = data.find_pattern(portal_pattern())
+    {
         offsets_to_validate.push((offset, "Portal (.actual.battle.net)"));
     }
 
-    // Check cert-bundle envelope pattern (only present in 1.14.x / 2.5.3)
-    if cert_bundle.bundle_bytes().is_some()
+    if patches.contains(PatchGroup::CERT_BUNDLE)
+        && cert_bundle.bundle_bytes().is_some()
         && let Some(offset) = data.find_pattern(cert_bundle_pattern())
     {
         offsets_to_validate.push((offset, "Cert bundle envelope ({\"Created\":)"));
     }
 
-    // Check cert-bundle URL literal (only present in 1.13.2 / 1.14.x / 2.5.3)
-    if cert_bundle.download_url().is_some()
+    if patches.contains(PatchGroup::CERT_BUNDLE_URL)
+        && cert_bundle.download_url().is_some()
         && let Some(offset) = data.find_pattern(cert_bundle_url_pattern())
     {
         offsets_to_validate.push((offset, "Cert bundle URL"));
     }
 
-    // Check ConnectToModulus only (Signature / CryptoRsa are not patched
-    // by the static path -- see the apply-flow comment).
-    if let Some(offset) = data.find_pattern(connect_to_modulus_pattern()) {
+    if patches.contains(PatchGroup::RSA)
+        && let Some(offset) = data.find_pattern(connect_to_modulus_pattern())
+    {
         offsets_to_validate.push((offset, "RSA Modulus (ConnectTo)"));
     }
 
-    // Check Ed25519 pattern (only for clients that use it)
-    if client_type.uses_ed25519()
+    if patches.contains(PatchGroup::ED25519)
+        && client_type.uses_ed25519()
         && let Some(offset) = data.find_pattern(crypto_ed_public_key_pattern())
     {
         offsets_to_validate.push((offset, "Ed25519 Public Key"));
     }
 
-    // Check version URL patterns (v1, v2, and v3)
-    if let Some(offset) = data.find_pattern(version_url_pattern()) {
-        offsets_to_validate.push((offset, "Version URL"));
-    }
-    if let Some(offset) = data.find_pattern(version_url_v2_pattern()) {
-        offsets_to_validate.push((offset, "Version URL v2"));
-    }
-    if let Some(offset) = data.find_pattern(version_url_v3_pattern()) {
-        offsets_to_validate.push((offset, "Version URL v3"));
+    if patches.contains(PatchGroup::VERSION) {
+        if let Some(offset) = data.find_pattern(version_url_pattern()) {
+            offsets_to_validate.push((offset, "Version URL"));
+        }
+        if let Some(offset) = data.find_pattern(version_url_v2_pattern()) {
+            offsets_to_validate.push((offset, "Version URL v2"));
+        }
+        if let Some(offset) = data.find_pattern(version_url_v3_pattern()) {
+            offsets_to_validate.push((offset, "Version URL v3"));
+        }
     }
 
-    // Check CDNs URL pattern
-    if let Some(offset) = data.find_pattern(cdns_url_pattern()) {
+    if patches.contains(PatchGroup::CDNS)
+        && let Some(offset) = data.find_pattern(cdns_url_pattern())
+    {
         offsets_to_validate.push((offset, "CDNs URL"));
     }
 
-    // Validate all found patterns are in patchable sections
     if let Err(validation_error) = validate_patch_offsets(&data, &offsets_to_validate) {
         if verbose {
             println!("⚠️  Section validation warnings:");
@@ -174,6 +216,8 @@ pub fn execute_patch(
         ));
     }
 
+    // --- Dry run ---
+
     if dry_run {
         println!("🔍 Dry Run Mode - No files will be modified");
         println!();
@@ -184,363 +228,115 @@ pub fn execute_patch(
             metadata.len() as f64 / (1024.0 * 1024.0)
         );
         println!("Client type: {}", client_type);
+        println!("Patch groups: {}", patches);
         println!();
-        println!("Section Validation:");
-        for (offset, pattern_name) in &offsets_to_validate {
-            if let Some(section) = check_offset_section(&data, *offset) {
-                if section.is_patchable {
-                    println!(
-                        "  ✓ {} at 0x{:x} in '{}' (patchable)",
-                        pattern_name, offset, section.name
-                    );
-                } else {
-                    println!(
-                        "  ⚠ {} at 0x{:x} in '{}' (NOT patchable - code section)",
-                        pattern_name, offset, section.name
-                    );
+        if !offsets_to_validate.is_empty() {
+            println!("Section Validation:");
+            for (offset, pattern_name) in &offsets_to_validate {
+                if let Some(section) = check_offset_section(&data, *offset) {
+                    if section.is_patchable {
+                        println!(
+                            "  ✓ {} at 0x{:x} in '{}' (patchable)",
+                            pattern_name, offset, section.name
+                        );
+                    } else {
+                        println!(
+                            "  ⚠ {} at 0x{:x} in '{}' (NOT patchable - code section)",
+                            pattern_name, offset, section.name
+                        );
+                    }
                 }
             }
+            println!();
         }
-        println!();
         println!("Patches that would be applied:");
-
-        // Check each pattern in the same order as the apply path:
-        // RSA (ConnectTo only) -> Ed25519 -> Cert bundle -> Cert
-        // bundle URL -> Portal -> Version URL -> CDNs URL.
-        // Static patcher only touches ConnectToModulus -- see the
-        // apply-flow comment for why Signature / Crypto are unsafe.
-        let mut temp_data = data.clone();
-        if patch(
-            &mut temp_data,
-            connect_to_modulus_pattern(),
-            key_config.rsa_modulus(),
-        )
-        .is_ok()
-        {
-            let key_label = if key_config.is_trinity_core() {
-                "TrinityCore key"
-            } else {
-                "custom key"
-            };
-            println!("  ✓ RSA modulus -> {} (ConnectTo)", key_label);
-        } else {
-            println!("  ✗ ConnectToModulus pattern not found");
-        }
-
-        temp_data = data.clone();
-        if client_type.uses_ed25519() {
-            if patch(
-                &mut temp_data,
-                crypto_ed_public_key_pattern(),
-                key_config.ed25519_public_key(),
-            )
-            .is_ok()
-            {
-                if key_config.is_trinity_core() {
-                    println!("  ✓ Ed25519 public key → TrinityCore Ed25519 key (32 bytes)");
-                } else {
-                    println!("  ✓ Ed25519 public key → Custom Ed25519 key (32 bytes)");
-                }
-            } else {
-                println!("  ✗ Ed25519 public key pattern not found");
-            }
-        } else {
-            println!("  ⚠ Ed25519 public key not used by {} clients", client_type);
-        }
-
-        if let Some(bundle) = cert_bundle.bundle_bytes() {
-            temp_data = data.clone();
-            match patch_with_padding(
-                &mut temp_data,
-                cert_bundle_pattern(),
-                bundle,
-                EMBEDDED_BUNDLE_SLOT,
-            ) {
-                Ok(()) => println!(
-                    "  ✓ Cert bundle ({} bytes -> {}-byte embedded slot)",
-                    bundle.len(),
-                    EMBEDDED_BUNDLE_SLOT
-                ),
-                Err(_) => println!(
-                    "  ⚠ Cert bundle envelope not found (skipped; expected for 1.13.2 / 1.15.2 / 3.4.3 / 4.4.2)"
-                ),
-            }
-        }
-
-        if let Some(url) = cert_bundle.download_url() {
-            temp_data = data.clone();
-            match patch_with_padding(
-                &mut temp_data,
-                cert_bundle_url_pattern(),
-                url.as_bytes(),
-                cert_bundle_url_pattern().len(),
-            ) {
-                Ok(()) => println!("  ✓ Cert bundle URL -> {}", url),
-                Err(_) => println!(
-                    "  ⚠ Cert bundle URL not found (skipped; expected for 1.15.2 / 3.4.3 / 4.4.2)"
-                ),
-            }
-        }
-
-        temp_data = data.clone();
-        if patch(
-            &mut temp_data,
-            portal_pattern(),
-            &portal_pattern().padded(&portal_domain.portal_replacement()),
-        )
-        .is_ok()
-        {
-            println!(
-                "  ✓ BGS portal (.actual.battle.net → .actual.{})",
-                portal_domain.as_str()
-            );
-        } else {
-            println!("  ✗ BGS portal pattern not found");
-        }
-
-        temp_data = data.clone();
-        let build_num = version.as_ref().map(|v| v.build);
-        let mut version_url_found = false;
-        let mut version_url_pattern_name = "";
-
-        // Try v1 pattern first
-        let version_url_replacement = create_url_replacement(
-            version_url.unwrap_or(&get_version_url(build_num, None, None)),
-            version_url_pattern().len(),
+        dry_run_preview(
+            &data,
+            &key_config,
+            version_url,
+            cdns_url,
+            &portal_domain,
+            &cert_bundle,
+            patches,
+            client_type,
+            version.as_ref(),
+            strip_codesign,
         );
-        if patch(
-            &mut temp_data,
-            version_url_pattern(),
-            &version_url_replacement,
-        )
-        .is_ok()
-        {
-            version_url_found = true;
-            version_url_pattern_name = "v1";
-        } else {
-            // Try v2 pattern
-            temp_data = data.clone();
-            let version_url_v2_replacement = create_url_replacement(
-                version_url.unwrap_or(&get_version_url(build_num, None, None)),
-                version_url_v2_pattern().len(),
-            );
-            if patch(
-                &mut temp_data,
-                version_url_v2_pattern(),
-                &version_url_v2_replacement,
-            )
-            .is_ok()
-            {
-                version_url_found = true;
-                version_url_pattern_name = "v2";
-            } else {
-                // Try v3 pattern (WoW Classic 1.15.8+ unified API)
-                temp_data = data.clone();
-                let version_url_v3_replacement = create_url_replacement(
-                    version_url.unwrap_or(&get_unified_api_url(build_num)),
-                    version_url_v3_pattern().len(),
-                );
-                if patch(
-                    &mut temp_data,
-                    version_url_v3_pattern(),
-                    &version_url_v3_replacement,
-                )
-                .is_ok()
-                {
-                    version_url_found = true;
-                    version_url_pattern_name = "v3 (unified API)";
-                }
-            }
-        }
-
-        if version_url_found {
-            if let Some(custom_url) = version_url {
-                println!(
-                    "  ✓ Version URL → Custom CDN ({}, {} pattern)",
-                    custom_url, version_url_pattern_name
-                );
-            } else if version_url_pattern_name.contains("v3") {
-                // v3 unified API handles both versions and cdns
-                if let Some(build_num) = build_num {
-                    println!(
-                        "  ✓ API URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{}/{{endpoint}}, {} pattern)",
-                        build_num, version_url_pattern_name
-                    );
-                } else {
-                    println!(
-                        "  ✓ API URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{{endpoint}}, {} pattern)",
-                        version_url_pattern_name
-                    );
-                }
-            } else if let Some(build_num) = build_num {
-                println!(
-                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{}/versions, {} pattern)",
-                    build_num, version_url_pattern_name
-                );
-            } else {
-                println!(
-                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/latest/versions, {} pattern)",
-                    version_url_pattern_name
-                );
-            }
-        } else {
-            println!("  ✗ Version URL pattern not found (tried v1, v2, and v3)");
-        }
-
-        temp_data = data.clone();
-        let cdns_url_replacement = create_url_replacement(
-            cdns_url.unwrap_or(&get_cdns_url()),
-            cdns_url_pattern().len(),
-        );
-        if patch(&mut temp_data, cdns_url_pattern(), &cdns_url_replacement).is_ok() {
-            if let Some(custom_url) = cdns_url {
-                println!("  ✓ CDNs URL → Custom CDN ({})", custom_url);
-            } else {
-                println!("  ✓ CDNs URL → Arctium CDN (http://ngdp.arctium.io/customs/wow/cdns)");
-            }
-        } else {
-            println!("  ✗ CDNs URL pattern not found");
-        }
-
-        if strip_codesign && cfg!(target_os = "macos") {
-            println!("  ✓ Remove macOS code signing");
-        }
-
         println!();
         println!("No changes were made. Remove --dry-run to apply patches.");
         return Ok(());
     }
 
-    // Apply patches
+    // --- Apply patches ---
+
     let mut patch_count = 0;
 
     if verbose {
         println!("Applying patches...");
     }
 
-    // Patch order rationale -- follows the runtime dependency chain:
-    //   1. RSA modulus       -- defeats the cert-bundle signature pin.
-    //   2. Ed25519 key       -- pairs with RSA for clients that use it.
-    //   3. Cert bundle bytes -- inject our signed bundle into the embedded
-    //      `{"Created":` slot (1.14.x / 2.5.3 only). Validates against the
-    //      modulus replaced in step 1.
-    //   4. Cert bundle URL   -- rewrite the 59-byte download URL slot so the
-    //      client fetches our self-signed bundle from an operator-controlled
-    //      host (1.13.2 / 1.14.x / 2.5.3 only).
-    //   5. BGS portal host   -- redirect `.actual.battle.net` so the BGS
-    //      HTTPS portal + Aurora-RPC TCP land on bgs-server.
-    //   6/7. Version + CDNs URLs -- TACT origin redirect for boot/install.
-    //
-    // Out of scope here (handled by separate future groups):
-    //   - 5 cosmetic nydus.battle.net URLs (driver-unsupported, trial
-    //     restriction, gametime/transactions UI, checkout, checkoutnav)
-    //     -- future `nydus-cosmetic` group
-    //   - Phoenix launcher-login registry path
-    //     -- future `launcher-login` group
-    //   - Runtime cert-validation branch flips (CertBundle JZ-NOP,
-    //     CertCommonName, CertChain) and Arxan anti-tamper
-    //     -- future `cert-runtime` / `arxan-runtime` groups, runtime-only
-    // See `docs/wow-classic/_cross-build/patcher-coverage.md` for the
-    // complete group catalog.
-
-    // RSA modulus - patch ConnectToModulus only.
-    //
-    // The wow-patcher historically supported three RSA modulus patterns
-    // (ConnectTo, Signature, CryptoRsa), under the assumption that
-    // different client versions used different ones and the patcher
-    // should pick whichever matched. Empirical testing in 2026-05
-    // showed two of the three are actively unsafe for static
-    // replacement on 1.13.2 (and likely Classic family generally):
-    //
-    //   - SignatureModulus replacement crashes the client at startup
-    //     inside `bgs::schannel_filter::InitCredentials`
-    //     (Wine staging 11.0). See
-    //     `analysis/wow-1132-signature-modulus-static-patch-crashes`.
-    //
-    //   - CryptoRsaModulus is read at one site as a NUL-terminated
-    //     string identifier (FUN_14131a3e0 -- a 36-byte FNV-style hash
-    //     accumulator). The original Blizzard bytes contain an early
-    //     NUL that bounds the loop; replacement keys with no early NUL
-    //     walk past the slot into unmapped memory and page-fault. See
-    //     `analysis/wow-1132-crypto-rsa-modulus-not-rsa`.
-    //
-    // ConnectToModulus is the only RSA slot that is BOTH safe to
-    // replace AND load-bearing for the auth flow on 1.13.2 (the cert-
-    // bundle pin verifies against ConnectToModulus per
-    // `analysis/wow-1132-blz51901015-resolved`).
-    //
-    // For 1.14+ legacy mode (where SignatureModulus replacement IS
-    // required for the embedded-bundle pin), use the runtime
-    // `wow-patcher launch --legacy-cert-mode` subcommand. That path
-    // applies the modulus writes via WriteProcessMemory at a moment
-    // in the launch sequence that avoids the InitCredentials crash
-    // (matching Arctium-WoW-Launcher's approach).
-    if let Err(e) = patch(
-        &mut data,
-        connect_to_modulus_pattern(),
-        key_config.rsa_modulus(),
-    ) {
-        if verbose {
-            println!("  ✗ ConnectToModulus pattern not found: {}", e);
-        }
-        return Err(WowPatcherError::wrap(
-            ErrorCategory::PatchingError,
-            "Failed to patch ConnectToModulus -- unsupported WoW version",
-            e,
-        ));
-    }
-    patch_count += 1;
-    if verbose {
-        if key_config.is_trinity_core() {
-            println!("  ✓ RSA modulus patched (TrinityCore key, ConnectTo)");
-        } else {
-            println!("  ✓ RSA modulus patched (custom key, ConnectTo)");
-        }
-    }
-
-    // Ed25519 (optional based on client type)
-    if client_type.uses_ed25519() {
+    // 1. RSA modulus (ConnectToModulus only)
+    if patches.contains(PatchGroup::RSA) {
         if let Err(e) = patch(
             &mut data,
-            crypto_ed_public_key_pattern(),
-            key_config.ed25519_public_key(),
+            connect_to_modulus_pattern(),
+            key_config.rsa_modulus(),
         ) {
             if verbose {
-                println!(
-                    "  ⚠ Ed25519 pattern not found (may be unsupported version): {}",
-                    e
-                );
+                println!("  ✗ ConnectToModulus pattern not found: {}", e);
             }
-        } else {
-            patch_count += 1;
-            if verbose {
-                if key_config.is_trinity_core() {
-                    println!("  ✓ Ed25519 public key patched (TrinityCore key)");
-                } else {
-                    println!("  ✓ Ed25519 public key patched (custom key)");
-                }
+            return Err(WowPatcherError::wrap(
+                ErrorCategory::PatchingError,
+                "Failed to patch ConnectToModulus -- unsupported WoW version",
+                e,
+            ));
+        }
+        patch_count += 1;
+        if verbose {
+            if key_config.is_trinity_core() {
+                println!("  ✓ RSA modulus patched (TrinityCore key, ConnectTo)");
+            } else {
+                println!("  ✓ RSA modulus patched (custom key, ConnectTo)");
             }
         }
     } else if verbose {
-        println!("  ℹ {} clients use RSA-based authentication", client_type);
+        println!("  ⋯ RSA modulus (skipped — not in --patches)");
     }
 
-    // Cert-bundle injection: replace the embedded `{"Created":...}` envelope
-    // bytes in the binary with the user-supplied signed bundle. Slot is
-    // 32761 bytes; user-supplied bundle is NUL-padded to fill the slot.
-    //
-    // Only fires for builds that ship with an embedded bundle (1.14.0,
-    // 1.14.1, 1.14.2, 2.5.3). For builds without an embedded bundle
-    // (1.13.2, 1.15.2, 3.4.3, 4.4.2), the pattern won't match and we
-    // skip with a verbose note. For those builds the user should pair
-    // `--cert-bundle` with `--cert-bundle-url` to direct the runtime
-    // download path at a host they control that serves the bundle.
-    //
-    // Pairs with the RSA modulus rewrite above: the bundle's signature
-    // is verified against the embedded modulus, which we just replaced
-    // with the user's key. The user is responsible for ensuring the
-    // bundle file was signed by the matching private key.
-    if let Some(bundle) = cert_bundle.bundle_bytes() {
+    // 2. Ed25519 (optional based on client type)
+    if patches.contains(PatchGroup::ED25519) {
+        if client_type.uses_ed25519() {
+            if let Err(e) = patch(
+                &mut data,
+                crypto_ed_public_key_pattern(),
+                key_config.ed25519_public_key(),
+            ) {
+                if verbose {
+                    println!(
+                        "  ⚠ Ed25519 pattern not found (may be unsupported version): {}",
+                        e
+                    );
+                }
+            } else {
+                patch_count += 1;
+                if verbose {
+                    if key_config.is_trinity_core() {
+                        println!("  ✓ Ed25519 public key patched (TrinityCore key)");
+                    } else {
+                        println!("  ✓ Ed25519 public key patched (custom key)");
+                    }
+                }
+            }
+        } else if verbose {
+            println!("  ℹ {} clients use RSA-based authentication", client_type);
+        }
+    } else if verbose {
+        println!("  ⋯ Ed25519 (skipped — not in --patches)");
+    }
+
+    // 3. Cert-bundle injection (input-gated: requires --cert-bundle)
+    if patches.contains(PatchGroup::CERT_BUNDLE) && cert_bundle.bundle_bytes().is_some() {
+        let bundle = cert_bundle.bundle_bytes().unwrap();
         match patch_with_padding(
             &mut data,
             cert_bundle_pattern(),
@@ -571,14 +367,9 @@ pub fn execute_patch(
         }
     }
 
-    // Cert-bundle download URL: replace the literal nydus URL with one
-    // pointing at a server the operator controls. Slot is 59 bytes;
-    // shorter URLs are NUL-padded.
-    //
-    // Use this when the user wants to decouple "where the bundle lives"
-    // from the rest of the namespace rewrites done by `--portal-domain`.
-    // For example, hosting the bundle on a separate CDN.
-    if let Some(url) = cert_bundle.download_url() {
+    // 4. Cert-bundle download URL (input-gated: requires --cert-bundle-url)
+    if patches.contains(PatchGroup::CERT_BUNDLE_URL) && cert_bundle.download_url().is_some() {
+        let url = cert_bundle.download_url().unwrap();
         match patch_with_padding(
             &mut data,
             cert_bundle_url_pattern(),
@@ -602,35 +393,19 @@ pub fn execute_patch(
         }
     }
 
-    // BGS portal: `.actual.battle.net` → `.actual.<domain>`
-    // (NUL-padded to 18 bytes if shorter). The 1.13.x-4.4.x clients construct
-    // the BGS portal URL via NUL-terminated string concat — `<region> +
-    // ".actual.battle.net" + "/path"`. Filling with all-NUL collapses the
-    // assembled URL at the embedded NUL and silently drops the path
-    // (manifests as `BLZ51901016 ERROR_NETWORK_MODULE_SOCKET_CLOSED`).
-    //
-    // The default `.actual.wowemu.dev` is byte-identical in length to the
-    // original; shorter overrides like `.actual.bgs.corp` get NUL-padded.
-    // The chosen domain must be reachable from the patched client's host
-    // (typically via `/etc/hosts` or a controlled resolver) and the
-    // bgs-server cert must be issued for / cover the resulting hostname.
-    //
-    // Scope note: this rewrites ONLY the BGS portal suffix. The cert-bundle
-    // download URL is handled by the cert-bundle group above; the 5 cosmetic
-    // nydus.battle.net URLs (driver-unsupported, trial-restriction, gametime,
-    // checkout, checkoutnav) are intentionally left untouched -- they belong
-    // to a future `nydus-cosmetic` group, not the auth-flow critical path.
-    let portal_replacement = portal_pattern().padded(&portal_domain.portal_replacement());
-    if let Err(e) = patch(&mut data, portal_pattern(), &portal_replacement) {
-        if verbose {
-            println!("  ✗ BGS portal pattern not found: {}", e);
+    // 5. BGS portal
+    if patches.contains(PatchGroup::PORTAL) {
+        let portal_replacement = portal_pattern().padded(&portal_domain.portal_replacement());
+        if let Err(e) = patch(&mut data, portal_pattern(), &portal_replacement) {
+            if verbose {
+                println!("  ✗ BGS portal pattern not found: {}", e);
+            }
+            return Err(WowPatcherError::wrap(
+                ErrorCategory::PatchingError,
+                "Failed to patch BGS portal pattern - unsupported WoW version",
+                e,
+            ));
         }
-        return Err(WowPatcherError::wrap(
-            ErrorCategory::PatchingError,
-            "Failed to patch BGS portal pattern - unsupported WoW version",
-            e,
-        ));
-    } else {
         patch_count += 1;
         if verbose {
             println!(
@@ -638,93 +413,84 @@ pub fn execute_patch(
                 portal_domain.as_str()
             );
         }
+    } else if verbose {
+        println!("  ⋯ BGS portal (skipped — not in --patches)");
     }
 
-    // Version URL patching - try v1 pattern first, then v2, then v3
+    // 6/7. Version + CDNs URLs
     let build_num = version.as_ref().map(|v| v.build);
-    let mut version_url_patched = false;
-    let mut version_url_pattern_name = "";
+    let mut used_unified_api = false;
 
-    // Try v1 pattern
-    let version_url_replacement = create_url_replacement(
-        version_url.unwrap_or(&get_version_url(build_num, None, None)),
-        version_url_pattern().len(),
-    );
-    if patch(&mut data, version_url_pattern(), &version_url_replacement).is_ok() {
-        version_url_patched = true;
-        version_url_pattern_name = "v1";
-    } else {
-        // Try v2 pattern
-        let version_url_v2_replacement = create_url_replacement(
+    if patches.contains(PatchGroup::VERSION) {
+        let mut version_url_patched = false;
+        let mut version_url_pattern_name = "";
+
+        // Try v1
+        let replacement_v1 = create_url_replacement(
             version_url.unwrap_or(&get_version_url(build_num, None, None)),
-            version_url_v2_pattern().len(),
+            version_url_pattern().len(),
         );
-        if patch(
-            &mut data,
-            version_url_v2_pattern(),
-            &version_url_v2_replacement,
-        )
-        .is_ok()
-        {
+        if patch(&mut data, version_url_pattern(), &replacement_v1).is_ok() {
             version_url_patched = true;
-            version_url_pattern_name = "v2";
+            version_url_pattern_name = "v1";
         } else {
-            // Try v3 pattern (WoW Classic 1.15.8+ unified API)
-            let version_url_v3_replacement = create_url_replacement(
-                version_url.unwrap_or(&get_unified_api_url(build_num)),
-                version_url_v3_pattern().len(),
+            // Try v2
+            let replacement_v2 = create_url_replacement(
+                version_url.unwrap_or(&get_version_url(build_num, None, None)),
+                version_url_v2_pattern().len(),
             );
-            if patch(
-                &mut data,
-                version_url_v3_pattern(),
-                &version_url_v3_replacement,
-            )
-            .is_ok()
-            {
+            if patch(&mut data, version_url_v2_pattern(), &replacement_v2).is_ok() {
                 version_url_patched = true;
-                version_url_pattern_name = "v3 (unified API)";
-            }
-        }
-    }
-
-    // Track if we used the unified v3 API (which handles both versions and cdns)
-    let used_unified_api = version_url_pattern_name.contains("v3");
-
-    if !version_url_patched {
-        if verbose {
-            println!(
-                "  ⚠ Version URL pattern not found (tried v1, v2, and v3, may be custom build)"
-            );
-        }
-    } else {
-        patch_count += 1;
-        if verbose {
-            if let Some(custom_url) = version_url {
-                println!(
-                    "  ✓ Version URL patched → Custom CDN ({}, {} pattern)",
-                    custom_url, version_url_pattern_name
-                );
-            } else if used_unified_api {
-                println!(
-                    "  ✓ API URL patched → Arctium CDN ({} pattern, handles versions+cdns)",
-                    version_url_pattern_name
-                );
+                version_url_pattern_name = "v2";
             } else {
-                println!(
-                    "  ✓ Version URL patched → Arctium CDN ({} pattern)",
-                    version_url_pattern_name
+                // Try v3 (unified API)
+                let replacement_v3 = create_url_replacement(
+                    version_url.unwrap_or(&get_unified_api_url(build_num)),
+                    version_url_v3_pattern().len(),
                 );
+                if patch(&mut data, version_url_v3_pattern(), &replacement_v3).is_ok() {
+                    version_url_patched = true;
+                    version_url_pattern_name = "v3 (unified API)";
+                }
             }
         }
+
+        used_unified_api = version_url_pattern_name.contains("v3");
+
+        if version_url_patched {
+            patch_count += 1;
+            if verbose {
+                if let Some(custom_url) = version_url {
+                    println!(
+                        "  ✓ Version URL patched → {} ({} pattern)",
+                        custom_url, version_url_pattern_name
+                    );
+                } else if used_unified_api {
+                    println!(
+                        "  ✓ API URL patched → Arctium CDN ({} pattern, handles versions+cdns)",
+                        version_url_pattern_name
+                    );
+                } else {
+                    println!(
+                        "  ✓ Version URL patched → Arctium CDN ({} pattern)",
+                        version_url_pattern_name
+                    );
+                }
+            }
+        } else if verbose {
+            println!("  ⚠ Version URL pattern not found (tried v1, v2, v3; may be custom build)");
+        }
+    } else if verbose {
+        println!("  ⋯ Version URL (skipped — not in --patches)");
     }
 
-    // CDNs URL patching (skip if we used the unified v3 API which handles both)
-    if !used_unified_api {
-        let cdns_url_replacement = create_url_replacement(
+    // CDNs URL (skip if v3 unified API handled both)
+    if patches.contains(PatchGroup::CDNS) && !used_unified_api {
+        let replacement = create_url_replacement(
             cdns_url.unwrap_or(&get_cdns_url()),
             cdns_url_pattern().len(),
         );
-        if let Err(e) = patch(&mut data, cdns_url_pattern(), &cdns_url_replacement) {
+        if let Err(e) = patch(&mut data, cdns_url_pattern(), &replacement) {
             if verbose {
                 println!(
                     "  ⚠ CDNs URL pattern not found (may be custom build): {}",
@@ -735,29 +501,39 @@ pub fn execute_patch(
             patch_count += 1;
             if verbose {
                 if let Some(custom_url) = cdns_url {
-                    println!("  ✓ CDNs URL patched → Custom CDN ({})", custom_url);
+                    println!("  ✓ CDNs URL patched → {}", custom_url);
                 } else {
                     println!("  ✓ CDNs URL patched → Arctium CDN");
                 }
             }
         }
-    } else if verbose {
+    } else if patches.contains(PatchGroup::CDNS) && verbose {
         println!("  ℹ CDNs URL handled by unified API pattern");
+    } else if verbose && !patches.contains(PatchGroup::CDNS) {
+        println!("  ⋯ CDNs URL (skipped — not in --patches)");
+    }
+
+    // --- Write output ---
+
+    if patch_count == 0 {
+        return Err(WowPatcherError::new(
+            ErrorCategory::PatchingError,
+            "No patches were applied. Check that --patches includes groups whose patterns exist in this binary.",
+        ));
     }
 
     // Create output directory if needed
-    if let Some(parent) = output_path.parent() {
-        // Only check if parent exists if it's not empty or current directory
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(WowPatcherError::new(
-                ErrorCategory::FileOperationError,
-                format!("Output directory does not exist: {:?}", parent),
-            ));
-        }
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
+        return Err(WowPatcherError::new(
+            ErrorCategory::FileOperationError,
+            format!("Output directory does not exist: {:?}", parent),
+        ));
     }
 
-    // Write patched file
-    fs::write(output_path, data).map_err(|e| {
+    fs::write(output_path, &data).map_err(|e| {
         WowPatcherError::wrap(
             ErrorCategory::FileOperationError,
             "Failed to write patched executable",
@@ -765,7 +541,6 @@ pub fn execute_patch(
         )
     })?;
 
-    // Set executable permissions on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -788,7 +563,6 @@ pub fn execute_patch(
         })?;
     }
 
-    // Remove code signing on macOS
     if strip_codesign
         && cfg!(target_os = "macos")
         && let Err(e) = remove_codesigning_signature(output_path.to_str().unwrap_or(""))
@@ -804,8 +578,228 @@ pub fn execute_patch(
         "✅ Successfully applied {} patches and saved to {:?}",
         patch_count, output_path
     );
-    println!();
-    println!("The patched client can now connect to TrinityCore private servers.");
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Dry-run preview helpers
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn dry_run_preview(
+    data: &[u8],
+    key_config: &KeyConfig,
+    version_url: Option<&str>,
+    cdns_url: Option<&str>,
+    portal_domain: &PortalDomain,
+    cert_bundle: &CertBundleConfig,
+    patches: PatchGroup,
+    client_type: crate::platform::ClientType,
+    version: Option<&crate::platform::Version>,
+    strip_codesign: bool,
+) {
+    // RSA
+    if patches.contains(PatchGroup::RSA) {
+        let mut temp = data.to_vec();
+        if patch(
+            &mut temp,
+            connect_to_modulus_pattern(),
+            key_config.rsa_modulus(),
+        )
+        .is_ok()
+        {
+            let key_label = if key_config.is_trinity_core() {
+                "TrinityCore key"
+            } else {
+                "custom key"
+            };
+            println!("  ✓ RSA modulus → {} (ConnectTo)", key_label);
+        } else {
+            println!("  ✗ ConnectToModulus pattern not found");
+        }
+    } else {
+        println!("  ⋯ RSA modulus (skipped)");
+    }
+
+    // Ed25519
+    if patches.contains(PatchGroup::ED25519) {
+        if client_type.uses_ed25519() {
+            let mut temp = data.to_vec();
+            if patch(
+                &mut temp,
+                crypto_ed_public_key_pattern(),
+                key_config.ed25519_public_key(),
+            )
+            .is_ok()
+            {
+                if key_config.is_trinity_core() {
+                    println!("  ✓ Ed25519 public key → TrinityCore Ed25519 key (32 bytes)");
+                } else {
+                    println!("  ✓ Ed25519 public key → Custom Ed25519 key (32 bytes)");
+                }
+            } else {
+                println!("  ✗ Ed25519 public key pattern not found");
+            }
+        } else {
+            println!("  ℹ Ed25519 public key not used by {} clients", client_type);
+        }
+    } else {
+        println!("  ⋯ Ed25519 (skipped)");
+    }
+
+    // Cert bundle injection
+    if patches.contains(PatchGroup::CERT_BUNDLE) && cert_bundle.bundle_bytes().is_some() {
+        let bundle = cert_bundle.bundle_bytes().unwrap();
+        let mut temp = data.to_vec();
+        match patch_with_padding(
+            &mut temp,
+            cert_bundle_pattern(),
+            bundle,
+            EMBEDDED_BUNDLE_SLOT,
+        ) {
+            Ok(()) => println!(
+                "  ✓ Cert bundle ({} bytes → {}-byte embedded slot)",
+                bundle.len(),
+                EMBEDDED_BUNDLE_SLOT
+            ),
+            Err(_) => println!(
+                "  ⚠ Cert bundle envelope not found (skipped; expected for 1.13.2 / 1.15.2 / 3.4.3 / 4.4.2)"
+            ),
+        }
+    }
+
+    // Cert bundle URL
+    if patches.contains(PatchGroup::CERT_BUNDLE_URL) && cert_bundle.download_url().is_some() {
+        let url = cert_bundle.download_url().unwrap();
+        let mut temp = data.to_vec();
+        match patch_with_padding(
+            &mut temp,
+            cert_bundle_url_pattern(),
+            url.as_bytes(),
+            cert_bundle_url_pattern().len(),
+        ) {
+            Ok(()) => println!("  ✓ Cert bundle URL → {}", url),
+            Err(_) => println!(
+                "  ⚠ Cert bundle URL not found (skipped; expected for 1.15.2 / 3.4.3 / 4.4.2)"
+            ),
+        }
+    }
+
+    // Portal
+    if patches.contains(PatchGroup::PORTAL) {
+        let mut temp = data.to_vec();
+        if patch(
+            &mut temp,
+            portal_pattern(),
+            &portal_pattern().padded(&portal_domain.portal_replacement()),
+        )
+        .is_ok()
+        {
+            println!(
+                "  ✓ BGS portal (.actual.battle.net → .actual.{})",
+                portal_domain.as_str()
+            );
+        } else {
+            println!("  ✗ BGS portal pattern not found");
+        }
+    } else {
+        println!("  ⋯ BGS portal (skipped)");
+    }
+
+    // Version URL
+    if patches.contains(PatchGroup::VERSION) {
+        let build_num = version.map(|v| v.build);
+        let mut version_url_found = false;
+        let mut version_url_pattern_name = "";
+
+        let mut temp = data.to_vec();
+        let replacement_v1 = create_url_replacement(
+            version_url.unwrap_or(&get_version_url(build_num, None, None)),
+            version_url_pattern().len(),
+        );
+        if patch(&mut temp, version_url_pattern(), &replacement_v1).is_ok() {
+            version_url_found = true;
+            version_url_pattern_name = "v1";
+        } else {
+            let mut temp = data.to_vec();
+            let replacement_v2 = create_url_replacement(
+                version_url.unwrap_or(&get_version_url(build_num, None, None)),
+                version_url_v2_pattern().len(),
+            );
+            if patch(&mut temp, version_url_v2_pattern(), &replacement_v2).is_ok() {
+                version_url_found = true;
+                version_url_pattern_name = "v2";
+            } else {
+                let mut temp = data.to_vec();
+                let replacement_v3 = create_url_replacement(
+                    version_url.unwrap_or(&get_unified_api_url(build_num)),
+                    version_url_v3_pattern().len(),
+                );
+                if patch(&mut temp, version_url_v3_pattern(), &replacement_v3).is_ok() {
+                    version_url_found = true;
+                    version_url_pattern_name = "v3 (unified API)";
+                }
+            }
+        }
+
+        if version_url_found {
+            if let Some(custom_url) = version_url {
+                println!(
+                    "  ✓ Version URL → {} ({} pattern)",
+                    custom_url, version_url_pattern_name
+                );
+            } else if version_url_pattern_name.contains("v3") {
+                if let Some(build_num) = build_num {
+                    println!(
+                        "  ✓ API URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{}/{{endpoint}}, {} pattern)",
+                        build_num, version_url_pattern_name
+                    );
+                } else {
+                    println!(
+                        "  ✓ API URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{{endpoint}}, {} pattern)",
+                        version_url_pattern_name
+                    );
+                }
+            } else if let Some(build_num) = build_num {
+                println!(
+                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/{}/versions, {} pattern)",
+                    build_num, version_url_pattern_name
+                );
+            } else {
+                println!(
+                    "  ✓ Version URL → Arctium CDN (http://ngdp.arctium.io/%s/%s/latest/versions, {} pattern)",
+                    version_url_pattern_name
+                );
+            }
+        } else {
+            println!("  ✗ Version URL pattern not found (tried v1, v2, and v3)");
+        }
+    } else {
+        println!("  ⋯ Version URL (skipped)");
+    }
+
+    // CDNs URL
+    if patches.contains(PatchGroup::CDNS) {
+        let mut temp = data.to_vec();
+        let replacement = create_url_replacement(
+            cdns_url.unwrap_or(&get_cdns_url()),
+            cdns_url_pattern().len(),
+        );
+        if patch(&mut temp, cdns_url_pattern(), &replacement).is_ok() {
+            if let Some(custom_url) = cdns_url {
+                println!("  ✓ CDNs URL → {}", custom_url);
+            } else {
+                println!("  ✓ CDNs URL → Arctium CDN (http://ngdp.arctium.io/customs/wow/cdns)");
+            }
+        } else {
+            println!("  ✗ CDNs URL pattern not found");
+        }
+    } else {
+        println!("  ⋯ CDNs URL (skipped)");
+    }
+
+    if strip_codesign && cfg!(target_os = "macos") {
+        println!("  ✓ Remove macOS code signing");
+    }
 }

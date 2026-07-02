@@ -634,6 +634,7 @@ dependencies = [
 name = "wow-patcher"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "chrono",
  "clap",
  "goblin",
