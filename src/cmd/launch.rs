@@ -849,9 +849,7 @@ pub mod win {
 
             if let Some(base) = scan_for_module_image(process_handle) {
                 if verbose {
-                    println!(
-                        "Module image located at 0x{base:X} via fallback scan"
-                    );
+                    println!("Module image located at 0x{base:X} via fallback scan");
                 }
                 return Ok(base);
             }
@@ -900,14 +898,8 @@ pub mod win {
             if addr >= scan_ceiling {
                 break;
             }
-            let result = unsafe {
-                VirtualQueryEx(
-                    process_handle,
-                    addr as *const _,
-                    &mut mbi,
-                    mbi_size,
-                )
-            };
+            let result =
+                unsafe { VirtualQueryEx(process_handle, addr as *const _, &mut mbi, mbi_size) };
             if result == 0 {
                 break;
             }
@@ -917,10 +909,7 @@ pub mod win {
 
             if mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE && alloc_base != 0 {
                 if alloc_base != current_alloc_base {
-                    if current_is_pe
-                        && current_extent >= LOWER
-                        && current_extent <= UPPER
-                    {
+                    if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
                         return Some(current_alloc_base);
                     }
                     current_alloc_base = alloc_base;
@@ -940,10 +929,7 @@ pub mod win {
                 }
                 current_extent += region_size;
             } else if alloc_base != current_alloc_base && current_alloc_base != 0 {
-                if current_is_pe
-                    && current_extent >= LOWER
-                    && current_extent <= UPPER
-                {
+                if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
                     return Some(current_alloc_base);
                 }
                 current_alloc_base = 0;

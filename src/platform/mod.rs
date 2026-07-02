@@ -96,12 +96,6 @@ pub fn detect_client_type(exe_path: &str) -> ClientType {
 #[cfg(target_os = "macos")]
 pub mod darwin;
 
-#[cfg(target_os = "windows")]
-pub mod windows;
-
-#[cfg(target_os = "linux")]
-pub mod linux;
-
 pub fn find_warcraft_client_executable() -> String {
     #[cfg(target_os = "macos")]
     {

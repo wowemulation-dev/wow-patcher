@@ -319,13 +319,9 @@ pub mod win {
             // anywhere in the user address space. The PE header (an `MZ`
             // signature) is read from the candidate's AllocationBase to
             // confirm it is a module image.
-            if let Some(base) =
-                scan_for_module_image(process_handle, image_size_hint)
-            {
+            if let Some(base) = scan_for_module_image(process_handle, image_size_hint) {
                 if verbose {
-                    println!(
-                        "Module image located at 0x{base:X} via fallback scan"
-                    );
+                    println!("Module image located at 0x{base:X} via fallback scan");
                 }
                 return Ok(base);
             }
@@ -363,10 +359,7 @@ pub mod win {
     ///      same AllocationBase) within 25% of `image_size_hint`.
     ///
     /// Returns None if no candidate is found in this pass.
-    fn scan_for_module_image(
-        process_handle: HANDLE,
-        image_size_hint: usize,
-    ) -> Option<usize> {
+    fn scan_for_module_image(process_handle: HANDLE, image_size_hint: usize) -> Option<usize> {
         if image_size_hint == 0 {
             return None;
         }
@@ -391,14 +384,8 @@ pub mod win {
             if addr >= scan_ceiling {
                 break;
             }
-            let result = unsafe {
-                VirtualQueryEx(
-                    process_handle,
-                    addr as *const _,
-                    &mut mbi,
-                    mbi_size,
-                )
-            };
+            let result =
+                unsafe { VirtualQueryEx(process_handle, addr as *const _, &mut mbi, mbi_size) };
             if result == 0 {
                 break;
             }
@@ -406,16 +393,10 @@ pub mod win {
             let region_size = mbi.RegionSize;
             let alloc_base = mbi.AllocationBase as usize;
 
-            if mbi.State == MEM_COMMIT
-                && mbi.Type == MEM_IMAGE
-                && alloc_base != 0
-            {
+            if mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE && alloc_base != 0 {
                 if alloc_base != current_alloc_base {
                     // Starting a new allocation — finalize the previous.
-                    if current_is_pe
-                        && current_extent >= lower
-                        && current_extent <= upper
-                    {
+                    if current_is_pe && current_extent >= lower && current_extent <= upper {
                         return Some(current_alloc_base);
                     }
                     current_alloc_base = alloc_base;
@@ -436,14 +417,9 @@ pub mod win {
                     last_alloc_base = alloc_base;
                 }
                 current_extent += region_size;
-            } else if alloc_base != current_alloc_base
-                && current_alloc_base != 0
-            {
+            } else if alloc_base != current_alloc_base && current_alloc_base != 0 {
                 // Region for a different (or no) allocation — finalize.
-                if current_is_pe
-                    && current_extent >= lower
-                    && current_extent <= upper
-                {
+                if current_is_pe && current_extent >= lower && current_extent <= upper {
                     return Some(current_alloc_base);
                 }
                 current_alloc_base = 0;
@@ -461,10 +437,7 @@ pub mod win {
         }
 
         // Finalize the trailing allocation.
-        if current_is_pe
-            && current_extent >= lower
-            && current_extent <= upper
-        {
+        if current_is_pe && current_extent >= lower && current_extent <= upper {
             return Some(current_alloc_base);
         }
         None
@@ -524,14 +497,8 @@ pub mod win {
         let mut protect_flips: usize = 0;
 
         while cursor < section_end {
-            let qres = unsafe {
-                VirtualQueryEx(
-                    process_handle,
-                    cursor as *const _,
-                    &mut mbi,
-                    mbi_size,
-                )
-            };
+            let qres =
+                unsafe { VirtualQueryEx(process_handle, cursor as *const _, &mut mbi, mbi_size) };
             if qres == 0 {
                 // Treat unmapped tail as zero-fill.
                 total_unreadable += section_end - cursor;
