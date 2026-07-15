@@ -17,7 +17,7 @@ node = "24"
 
 # ── Linting and auditing ─────────────────────
 "cargo:cargo-deny" = "latest"
-"npm:markdownlint-cli2" = "latest"
+"npm:markdownlint" = "latest"
 actionlint = "latest"
 
 # ── Documentation ─────────────────────────────

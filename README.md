@@ -25,27 +25,43 @@ expansions you want to play.
 
 ## How It Works
 
-The patcher modifies your WoW executable by:
+The patcher modifies your WoW executable to redirect it away from Blizzard's
+infrastructure and toward your own server. It achieves this by updating three
+main components:
 
-1. **Redirecting the login portal** - Replaces `.actual.battle.net` with
-   `.localhost`, pointing the client at your own server.
-2. **Replacing the RSA modulus** - Updates the 256-byte RSA key so the
-   client trusts your certificate bundle instead of Blizzard's. The bundle
-   tells the client which TLS certificates to accept, and the modulus proves
-   the bundle itself hasn't been tampered with.
-3. **Rewriting the bundle URL (older clients)** - For builds that download the
-   bundle at startup (1.13.2), replaces Blizzard's download URL with your own.
-4. **Updating Ed25519 keys** - For supported clients, replaces the Ed25519
-   public key (32 bytes).
+1. **Login Redirection** - Replaces the internal address `.actual.battle.net`
+   with `.localhost`. This tells the game client to look for your login portal on
+   your local network instead of over the internet.
+2. **Identity Verification (RSA Modulus)** - The game uses a 256-byte RSA key
+   to verify that its \"Certificate Bundle\" is authentic. We replace this standard
+   Blizzard key with a custom one. This allows the client to trust the security
+   certificates you provide for your private server.
+3. **Compatibility Patches** - For older clients (like those from the 1.13.2
+   era), we also rewrite the URL used to download these certificates at startup,
+   ensuring they point to your resources.
 
-The patcher detects the client type automatically and applies the right
-patches for your version.
+The patcher automatically detects which version of the game client you are
+running and applies only the necessary patches for that specific build.
+
+## Supported Client Builds
+
+The patcher supports the following WoW Classic client lines:
+
+| Client line           | Recreates                    | Status   |
+| --------------------- | ---------------------------- | -------- |
+| 1.13.x (2019 to 2021) | Vanilla, 2005 (v1.12)        | Verified |
+| 1.14.x (2021 to 2023) | Vanilla, 2005 (v1.12)        | Verified |
+| 2.5.x through 2.5.4   | The Burning Crusade, 2007    | Verified |
+| 3.4.x through 3.4.4   | Wrath of the Lich King, 2008 | Verified |
+| 4.4.x through 4.4.2   | Cataclysm, 2010              | Verified |
+
+Build numbers are the values reported by the client at its login screen and
+catalogued at [warcraft.wiki.gg][public-builds].
 
 ## Features
 
 - No in-client memory modifications (patches files on disk)
 - Supports Windows, macOS, and Linux
-- Works with WoW Classic and Classic Era
 - Dry-run mode for previewing changes
 - Automatic WoW executable detection on macOS
 
@@ -85,7 +101,7 @@ wow-patcher --dry-run -l ./Wow.exe
 <details>
 <summary>Platform-specific paths</summary>
 
-#### Windows
+### Windows
 
 ```bash
 # Custom output location
@@ -193,8 +209,9 @@ uses custom keys or a custom certificate bundle, use `--rsa-file`,
 
 ## Acknowledgments
 
-- Enormous thanks to [Fabian](https://github.com/Fabi) from [Arctium](https://arctium.io/) for the knowledge that made this possible
-- The TrinityCore team for their work on the server emulator
+    - Enormous thanks to [Fabian](https://github.com/Fabi)
+      from [Arctium](https://arctium.io/) for the knowledge that made this possible
+    - The TrinityCore team for their work on the server emulator
 
 ## Support the Project
 
@@ -233,3 +250,5 @@ be dual licensed as above, without any additional terms or conditions.
 **Note**: This project is not affiliated with Blizzard Entertainment. It is
 an independent implementation based on reverse engineering by the World of
 Warcraft emulation community.
+
+[public-builds]: https://warcraft.wiki.gg/wiki/Public_client_builds
