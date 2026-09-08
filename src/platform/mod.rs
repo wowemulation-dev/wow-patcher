@@ -164,6 +164,9 @@ fn parse_dotted_version(s: &str) -> Option<Version> {
     let minor = parts.next()?.trim().parse().ok()?;
     let patch = parts.next()?.trim().parse().ok()?;
     let build = parts.next()?.trim().parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
     Some(Version::new(major, minor, patch, build))
 }
 
@@ -232,6 +235,8 @@ mod tests {
         );
         assert_eq!(parse_dotted_version("Version 5.5.3"), None);
         assert_eq!(parse_dotted_version("5.5.3"), None);
+        assert_eq!(parse_dotted_version("12.0.7.68887.1"), None);
+        assert_eq!(parse_dotted_version("12.0.7.4294967296"), None);
     }
 
     #[test]
