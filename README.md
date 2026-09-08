@@ -82,9 +82,9 @@ cargo build --release
 
 ## Usage
 
-For retail **12.0.7.68887** on Windows x64, see the opt-in
-[runtime launch command](docs/retail-runtime.md). Other retail builds require
-separate validation.
+The [runtime `launch` command](docs/retail-runtime.md) selects its strategy from
+the file version. Retail 12.x and later use the new strategy; its verified
+Windows x64 recipe currently covers **12.0.7.68887**.
 
 Run `wow-patcher --help` to see all options. The most common invocations:
 

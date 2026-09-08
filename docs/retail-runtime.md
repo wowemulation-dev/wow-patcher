@@ -1,9 +1,30 @@
 # Retail runtime patching
 
-`launch-retail` is an opt-in Windows x64 command for **12.0.7.68887**.
-It leaves the executable on disk unchanged. Other retail builds, including
-12.0.0.65655, are rejected until their layouts and startup sequences are tested.
-The existing static patcher and `launch` command keep their existing behavior.
+`launch` reads the executable's file version and selects its runtime strategy.
+It leaves the executable on disk unchanged. Strategy selection and availability
+of a build-specific patch recipe are separate checks:
+
+| File version | Selected strategy |
+| --- | --- |
+| 12.x and later major versions | New retail strategy; currently only **12.0.7.68887** has a verified recipe |
+| 1.13.x, 1.14.x | Existing runtime strategy |
+| 2.5.0–2.5.4, 3.4.0–3.4.4, 4.4.0–4.4.2 | Existing runtime strategy |
+| 9.x, 10.x | Existing runtime strategy |
+| Other versions or unreadable version metadata | Rejected before launch |
+
+There is no fallback from an unverified retail build to the older strategy.
+For example, 12.0.0.65655 and 13.x select the retail strategy but stop before
+starting a process because their recipes are not verified. The recorded 68887
+addresses must not be applied to other builds. The client filename does not
+select a strategy; Classic's version text takes precedence over fixed engine
+version fields, and build numbers retain all 32 bits.
+
+The older ranges retain their existing patch implementation and its validation
+limits. They are not new claims of successful login for every build. In
+particular, `--legacy-cert-mode` is rejected on 1.13.x. Retail-only options are
+rejected on older versions. Runtime `--dry-run` currently works only for the
+retail strategy; requesting it for an older version stops without launching.
+The default static-patching command remains unchanged.
 
 ## Usage
 
@@ -12,10 +33,10 @@ desired portal in `WTF/Config.wtf` before launching. Supply the server's public
 certificate in PEM format; private keys remain with the server.
 
 ```powershell
-wow-patcher launch-retail -l C:\Games\WoW\Wow.exe `
+wow-patcher launch -l C:\Games\WoW\Wow.exe `
   --server-cert C:\certificates\server.pem --portal-suffix "" --dry-run
 
-wow-patcher launch-retail -l C:\Games\WoW\Wow.exe `
+wow-patcher launch -l C:\Games\WoW\Wow.exe `
   --server-cert C:\certificates\server.pem --portal-suffix "" -v
 ```
 
@@ -74,7 +95,8 @@ because an address is readable.
 
 ## Validation scope
 
-Automated tests cover option rejection, string bounds, path normalization,
+Automated tests cover version-range boundaries, future retail routing,
+file-version precedence, option rejection, string bounds, path normalization,
 signature mismatch, reader ranges, executed certificate-handler routing,
 memory protection restoration and failed-launch process cleanup.
 
@@ -82,7 +104,8 @@ Live validation checks successful startup and persistent in-memory patches.
 It does not establish successful server authentication, character selection or
 world entry. Those require a compatible server and protocol implementation.
 
-On 2026-09-08, a Windows x64 test remained responsive at **173.6 seconds**.
+On 2026-09-08, a Windows x64 test through the version-selected `launch` command
+remained responsive at **144.1 seconds**.
 All five code writes and the certificate handler were readable and intact;
 the 51 temporary bytes were restored. The executable, loader and original
 configuration hashes were unchanged. The test used a separate configuration

@@ -1,14 +1,15 @@
-//! Opt-in runtime recipe for retail 12.0.7.68887.
+//! Version-selected runtime recipe for retail 12.0.7.68887.
 //!
 //! Encrypted code is validated in memory before any certificate patch is written.
-//! The default static patcher and the existing launch command are independent.
+//! The static patcher is independent of this launch strategy.
 
 mod process;
 mod runtime;
 
 use std::{fs, path::PathBuf, time::Duration};
 
-use crate::platform::{Version, extract_version};
+use crate::cmd::launch_strategy::validate_retail_recipe;
+use crate::platform::extract_version;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -77,12 +78,9 @@ fn client_path(path: &std::path::Path) -> Result<PathBuf> {
 }
 
 fn prepare(opts: &Options) -> Result<Plan> {
-    if extract_version(&opts.executable) != Some(Version::new(12, 0, 7, 68887)) {
-        return Err(
-            "launch-retail supports only 12.0.7.68887; other builds need a verified runtime recipe"
-                .into(),
-        );
-    }
+    validate_retail_recipe(
+        extract_version(&opts.executable).ok_or("Cannot read the executable's file version")?,
+    )?;
     let executable = client_path(&opts.executable)?;
     let folder = executable.parent().ok_or("Missing executable directory")?;
     if !folder.join("Wow_loader.dll").is_file() {

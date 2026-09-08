@@ -148,24 +148,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Launch retail 12.0.7.68887 with in-memory certificate patches (Windows x64).
-    LaunchRetail {
-        /// Public server certificate in PEM format (no private key).
-        #[arg(long, value_name = "FILE")]
-        server_cert: PathBuf,
-
-        /// Portal suffix; pass an empty string to use the configured portal verbatim.
-        #[arg(long, allow_hyphen_values = true)]
-        portal_suffix: Option<String>,
-
-        /// Client configuration filename under the game's WTF directory.
-        #[arg(long, default_value = "Config.wtf")]
-        config: String,
-
-        /// Timeout in seconds for each startup phase.
-        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(3..=300))]
-        timeout: u64,
-    },
     /// Print version information
     Version {
         /// Show detailed version information
@@ -215,45 +197,35 @@ pub enum Commands {
         post_decrypt_wait: u64,
     },
 
-    /// Launch the WoW client with runtime-mode patches applied
-    /// (Windows / Wine only).
+    /// Launch with a runtime strategy selected from the executable's file version.
     ///
-    /// Resumes the client from a CREATE_SUSPENDED state, waits for
-    /// Arxan to decrypt the .text section, NOPs the integrity check,
-    /// then writes the configured RSA / Ed25519 / portal / cert-bundle
-    /// patches via WriteProcessMemory before resuming.
-    ///
-    /// This is the runtime counterpart to the default static-binary
-    /// patching flow. Use it when static patching of SignatureModulus
-    /// crashes the client at startup (verified failure mode on Wine
-    /// staging 11.0 against WoW Classic 1.13.2; see Serena memory
-    /// `analysis/wow-1132-signature-modulus-static-patch-crashes`).
-    ///
-    /// The same global flags (--rsa-hex, --bgs-portal-domain,
-    /// --cert-bundle-url, --cert-bundle, etc.) configure the patches.
+    /// Retail 12.x and later use the new strategy; currently its only verified
+    /// recipe is 12.0.7.68887, which requires --server-cert and Windows x64.
+    /// Documented older version families use the existing runtime strategy.
     Launch {
-        /// Seconds to wait for Arxan decryption (0 = auto-detect via
-        /// the same heuristic dump-sections uses). Only relevant
-        /// when --legacy-cert-mode is set.
+        /// Seconds to wait for decryption in the older strategy (0 = auto-detect).
         #[arg(short = 'w', long, default_value_t = 0)]
         wait: u64,
 
-        /// Apply legacy-cert-mode patches (1.14+ only).
-        ///
-        /// Adds SignatureModulus replacement, embedded cert-bundle
-        /// byte injection, and runtime cert-validation NOPs
-        /// (Integrity, CertBundle JZ, CertCommonName, CertChain) on
-        /// top of the default data-slot patches. These additions
-        /// match Arctium-WoW-Launcher's `legacyCertMode` block at
-        /// `Launcher.cs:249-260,288-300`.
-        ///
-        /// Do NOT use for 1.13.x: that build's cert-bundle pin
-        /// verifies against ConnectToModulus directly, so
-        /// SignatureModulus must be left stock. (Replacing it
-        /// statically crashes `bgs::schannel_filter::InitCredentials`;
-        /// see `analysis/wow-1132-signature-modulus-static-patch-crashes`.)
+        /// Enable optional older certificate patches; incompatible with 1.13.x.
         #[arg(long = "legacy-cert-mode", default_value_t = false)]
         legacy_cert_mode: bool,
+
+        /// Public PEM server certificate, required by the new retail strategy.
+        #[arg(long, value_name = "FILE")]
+        server_cert: Option<PathBuf>,
+
+        /// Retail portal suffix; an empty string uses the configured portal verbatim.
+        #[arg(long, allow_hyphen_values = true)]
+        portal_suffix: Option<String>,
+
+        /// Retail configuration filename under WTF (default: Config.wtf).
+        #[arg(long)]
+        config: Option<String>,
+
+        /// Retail timeout per startup phase in seconds (default: 30).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(3..=300))]
+        timeout: Option<u64>,
     },
 }
 
@@ -261,54 +233,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::LaunchRetail {
-            server_cert,
-            portal_suffix,
-            config,
-            timeout,
-        }) => {
-            if cli.rsa_file.is_some()
-                || cli.rsa_hex.is_some()
-                || cli.portal_domain.is_some()
-                || cli.cert_bundle.is_some()
-                || cli.cert_bundle_url.is_some()
-                || cli.cdns_url.is_some()
-                || cli.patches != "all"
-            {
-                return Err("launch-retail accepts Ed25519 keys, --version-url and --portal-suffix; RSA, bundle, domain, CDN and patch-group options do not apply".into());
-            }
-            if cli.ed25519_file.is_some() && cli.ed25519_hex.is_some() {
-                return Err("Use only one of --ed25519-file and --ed25519-hex".into());
-            }
-            let mut keys = KeyConfig::default();
-            if let Some(path) = cli.ed25519_file {
-                keys = keys.with_ed25519_from_file(path)?;
-            } else if let Some(value) = cli.ed25519_hex {
-                keys = keys.with_ed25519_from_hex(&value)?;
-            }
-            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-            {
-                crate::cmd::retail::run(crate::cmd::retail::Options {
-                    executable: cli
-                        .location
-                        .ok_or("Specify the client executable with -l")?
-                        .into(),
-                    server_cert,
-                    portal_suffix,
-                    config,
-                    version_url: cli.version_url,
-                    ed25519: keys.ed25519_public_key().to_vec(),
-                    timeout: std::time::Duration::from_secs(timeout),
-                    dry_run: cli.dry_run,
-                    verbose: cli.verbose,
-                })
-            }
-            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-            {
-                let _ = (server_cert, portal_suffix, config, timeout, keys);
-                Err("launch-retail requires a Windows x64 patcher executable".into())
-            }
-        }
         Some(Commands::Version { detailed }) => {
             if detailed {
                 println!("{}", crate::version::detailed_info());
@@ -386,16 +310,67 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Launch {
             wait,
             legacy_cert_mode,
+            server_cert,
+            portal_suffix,
+            config,
+            timeout,
         }) => {
+            use crate::cmd::launch_strategy::{
+                LaunchStrategy, select_strategy, validate_retail_recipe,
+            };
+
             let location = cli
                 .location
                 .unwrap_or_else(crate::platform::find_warcraft_client_executable);
             if location.is_empty() {
                 return Err("No WoW executable specified. Use -l flag to specify the path.".into());
             }
+            let version = crate::platform::extract_version(std::path::Path::new(&location))
+                .ok_or("Cannot read the executable's file version; no launch strategy selected and no process started")?;
+            let strategy = select_strategy(version)?;
+            if cli.verbose {
+                println!("Detected client version: {version}; launch strategy: {strategy:?}");
+            }
 
-            // Build the same key/portal/cert-bundle config as the
-            // static path so users can pass identical flags.
+            match strategy {
+                LaunchStrategy::Retail => {
+                    validate_retail_recipe(version)?;
+                    if legacy_cert_mode
+                        || wait != 0
+                        || cli.rsa_file.is_some()
+                        || cli.rsa_hex.is_some()
+                        || cli.portal_domain.is_some()
+                        || cli.cert_bundle.is_some()
+                        || cli.cert_bundle_url.is_some()
+                        || cli.cdns_url.is_some()
+                        || cli.patches != "all"
+                    {
+                        return Err("The retail strategy accepts Ed25519 keys, --version-url and --portal-suffix; legacy certificate, wait, RSA, bundle, domain, CDN and patch-group options do not apply".into());
+                    }
+                    if server_cert.is_none() {
+                        return Err("The retail strategy requires --server-cert FILE (public PEM certificate); no process started".into());
+                    }
+                }
+                LaunchStrategy::Legacy => {
+                    if server_cert.is_some()
+                        || portal_suffix.is_some()
+                        || config.is_some()
+                        || timeout.is_some()
+                    {
+                        return Err("--server-cert, --portal-suffix, --config and --timeout require the retail strategy".into());
+                    }
+                    if legacy_cert_mode && (version.major, version.minor) == (1, 13) {
+                        return Err(
+                            "--legacy-cert-mode is incompatible with 1.13.x; no process started"
+                                .into(),
+                        );
+                    }
+                    if cli.dry_run {
+                        return Err("Runtime --dry-run is implemented only for the retail strategy; no process started".into());
+                    }
+                }
+            }
+
             let mut key_config = KeyConfig::default();
             if cli.rsa_file.is_some() && cli.rsa_hex.is_some() {
                 return Err("Cannot specify both --rsa-file and --rsa-hex at the same time".into());
@@ -416,45 +391,59 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 key_config = key_config.with_ed25519_from_hex(h)?;
             }
 
-            let portal_domain = match &cli.portal_domain {
-                Some(d) => PortalDomain::parse(d)?,
-                None => PortalDomain::default(),
-            };
-
-            let mut cert_bundle = CertBundleConfig::default();
-            if let Some(path) = &cli.cert_bundle {
-                cert_bundle = cert_bundle.with_bundle_from_file(path)?;
-            }
-            if let Some(url) = &cli.cert_bundle_url {
-                cert_bundle = cert_bundle.with_download_url(url)?;
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                crate::cmd::launch::win::launch_and_patch(
-                    crate::cmd::launch::win::LaunchOptions {
-                        exe_path: &location,
-                        key_config: &key_config,
-                        portal_domain: &portal_domain,
-                        cert_bundle: &cert_bundle,
-                        legacy_cert_mode,
-                        wait_seconds: wait,
-                        verbose: cli.verbose,
-                    },
-                )?;
-                Ok(())
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = (
-                    &location,
-                    &key_config,
-                    &portal_domain,
-                    &cert_bundle,
-                    wait,
-                    legacy_cert_mode,
-                );
-                Err("launch requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
+            match strategy {
+                LaunchStrategy::Retail => {
+                    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+                    {
+                        crate::cmd::retail::run(crate::cmd::retail::Options {
+                            executable: location.into(),
+                            server_cert: server_cert.ok_or("Missing --server-cert")?,
+                            portal_suffix,
+                            config: config.unwrap_or_else(|| "Config.wtf".to_string()),
+                            version_url: cli.version_url,
+                            ed25519: key_config.ed25519_public_key().to_vec(),
+                            timeout: std::time::Duration::from_secs(timeout.unwrap_or(30)),
+                            dry_run: cli.dry_run,
+                            verbose: cli.verbose,
+                        })
+                    }
+                    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+                    {
+                        Err("The retail strategy requires a Windows x64 patcher executable".into())
+                    }
+                }
+                LaunchStrategy::Legacy => {
+                    let portal_domain = match &cli.portal_domain {
+                        Some(d) => PortalDomain::parse(d)?,
+                        None => PortalDomain::default(),
+                    };
+                    let mut cert_bundle = CertBundleConfig::default();
+                    if let Some(path) = &cli.cert_bundle {
+                        cert_bundle = cert_bundle.with_bundle_from_file(path)?;
+                    }
+                    if let Some(url) = &cli.cert_bundle_url {
+                        cert_bundle = cert_bundle.with_download_url(url)?;
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        crate::cmd::launch::win::launch_and_patch(
+                            crate::cmd::launch::win::LaunchOptions {
+                                exe_path: &location,
+                                key_config: &key_config,
+                                portal_domain: &portal_domain,
+                                cert_bundle: &cert_bundle,
+                                legacy_cert_mode,
+                                wait_seconds: wait,
+                                verbose: cli.verbose,
+                            },
+                        )
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = (&key_config, &portal_domain, &cert_bundle);
+                        Err("launch requires Windows (or Wine). Cross-compile with: cargo build --target x86_64-pc-windows-gnu".into())
+                    }
+                }
             }
         }
         None => {
