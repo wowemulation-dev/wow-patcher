@@ -1,15 +1,17 @@
-//! Version-selected runtime recipe for retail 12.0.7.68887.
+//! Build-specific retail runtime recipes.
 //!
 //! Encrypted code is validated in memory before any certificate patch is written.
 //! The static patcher is independent of this launch strategy.
 
 mod process;
+mod recipe;
 mod runtime;
 
 use std::{fs, path::PathBuf, time::Duration};
 
 use crate::cmd::launch_strategy::validate_retail_recipe;
 use crate::platform::extract_version;
+use recipe::{Recipe, verify_identity};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -37,15 +39,11 @@ struct Plan {
     certificate: PathBuf,
     entry_rva: usize,
     data: Vec<DataPatch>,
+    recipe: &'static Recipe,
+    entry_original: Vec<u8>,
 }
 
 const TEXT_START: usize = 0x1000;
-const TEXT_SIZE: usize = 0x35c0b4c;
-const FILE_RESOLVER: usize = 0x33ff200;
-const PATH_GATE: usize = 0x33f5543;
-const CERT_DEV: usize = 0x265fc80;
-const SYSTEM_CERT: usize = 0x337105e;
-const COMMON_NAME: usize = 0x336e721;
 const PROLOGUE: &[u8] = &[
     0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xf9,
 ];
@@ -78,9 +76,10 @@ fn client_path(path: &std::path::Path) -> Result<PathBuf> {
 }
 
 fn prepare(opts: &Options) -> Result<Plan> {
-    validate_retail_recipe(
-        extract_version(&opts.executable).ok_or("Cannot read the executable's file version")?,
-    )?;
+    let version =
+        extract_version(&opts.executable).ok_or("Cannot read the executable's file version")?;
+    validate_retail_recipe(version)?;
+    let recipe = Recipe::from_version(version)?;
     let executable = client_path(&opts.executable)?;
     let folder = executable.parent().ok_or("Missing executable directory")?;
     if !folder.join("Wow_loader.dll").is_file() {
@@ -113,6 +112,12 @@ fn prepare(opts: &Options) -> Result<Plan> {
         return Err("Ed25519 key must contain 32 bytes".into());
     }
     let bytes = fs::read(&executable)?;
+    verify_identity(&bytes, recipe.image_hash, "executable")?;
+    verify_identity(
+        &fs::read(folder.join("Wow_loader.dll"))?,
+        recipe.loader_hash,
+        "loader",
+    )?;
     let pe = goblin::pe::PE::parse(&bytes)?;
     if !pe.is_64 || pe.header.coff_header.machine != 0x8664 {
         return Err("The runtime recipe requires an x64 PE image".into());
@@ -122,9 +127,30 @@ fn prepare(opts: &Options) -> Result<Plan> {
         .iter()
         .find(|s| s.name().ok() == Some(".text"))
         .ok_or("Missing .text section")?;
-    if text.virtual_address as usize != TEXT_START || text.virtual_size as usize != TEXT_SIZE {
-        return Err("Unexpected .text layout for 12.0.7.68887".into());
+    if text.virtual_address as usize != TEXT_START || text.virtual_size as usize != recipe.text_size
+    {
+        return Err(format!("Unexpected .text layout for {}", recipe.version).into());
     }
+    let entry_original = if recipe.holds_entry() {
+        let rdata = pe
+            .sections
+            .iter()
+            .find(|s| s.name().ok() == Some(".rdata"))
+            .ok_or("Missing .rdata section")?;
+        if pe.entry != 0x1d9e10
+            || rdata.virtual_address as usize != recipe.stub_rva()
+            || rdata.virtual_size != 0xb5081c
+        {
+            return Err("Unexpected startup layout for 12.1.0.69587".into());
+        }
+        let offset = text.pointer_to_raw_data as usize + pe.entry as usize - TEXT_START;
+        bytes
+            .get(offset..offset + 64)
+            .ok_or("Truncated entry bytes")?
+            .to_vec()
+    } else {
+        Vec::new()
+    };
     let mut data = Vec::new();
     let mut add = |name, rva: usize, anchor: &[u8], replacement: Vec<u8>| -> Result<()> {
         let size = replacement.len();
@@ -157,14 +183,14 @@ fn prepare(opts: &Options) -> Result<Plan> {
     };
     add(
         "Ed25519 public key",
-        0x35ebf30,
+        recipe.ed25519,
         &[0x15, 0xd6, 0x18, 0xbd, 0x7d, 0xb5, 0x77, 0xbd],
         opts.ed25519.clone(),
     )?;
     if let Some(suffix) = &opts.portal_suffix {
         add(
             "Portal suffix",
-            0x37cdaa0,
+            recipe.portal,
             b".actual.battle.net\0",
             padded_string(suffix, 19)?,
         )?;
@@ -172,10 +198,13 @@ fn prepare(opts: &Options) -> Result<Plan> {
     if let Some(url) = &opts.version_url {
         for (rva, original) in [
             (
-                0x3993770,
+                recipe.urls[0],
                 "https://cn.version.battlenet.com.cn/v2/products/%s/%s",
             ),
-            (0x39937b0, "https://%s.version.battle.net/v2/products/%s/%s"),
+            (
+                recipe.urls[1],
+                "https://%s.version.battle.net/v2/products/%s/%s",
+            ),
         ] {
             add(
                 "Version URL",
@@ -187,6 +216,8 @@ fn prepare(opts: &Options) -> Result<Plan> {
     }
     Ok(Plan {
         entry_rva: pe.entry as usize,
+        recipe,
+        entry_original,
         executable,
         certificate,
         data,
@@ -195,7 +226,7 @@ fn prepare(opts: &Options) -> Result<Plan> {
 
 pub(crate) fn run(opts: Options) -> Result<()> {
     let plan = prepare(&opts)?;
-    println!("Retail runtime recipe: 12.0.7.68887");
+    println!("Retail runtime recipe: {}", plan.recipe.version);
     for patch in &plan.data {
         println!(
             "  {}: RVA 0x{:X}, {} bytes",
@@ -246,7 +277,10 @@ fn read_stub(start: usize, end: usize) -> Vec<u8> {
     code
 }
 
-fn sweep_ranges() -> Vec<(usize, usize)> {
+fn sweep_ranges(recipe: &Recipe) -> Vec<(usize, usize)> {
+    if recipe.holds_entry() {
+        return vec![(TEXT_START, TEXT_START + recipe.text_size)];
+    }
     // Reproduce the 100 skipped pages used to validate this build. The final
     // range ends at the virtual section boundary, not the next page boundary.
     const SKIP: [usize; 100] = [
@@ -263,7 +297,7 @@ fn sweep_ranges() -> Vec<(usize, usize)> {
     for stop in SKIP
         .into_iter()
         .map(|page| TEXT_START + page * 0x1000)
-        .chain(std::iter::once(TEXT_START + TEXT_SIZE))
+        .chain(std::iter::once(TEXT_START + recipe.text_size))
     {
         if cursor < stop {
             ranges.push((cursor, stop));
@@ -340,23 +374,37 @@ mod tests {
 
     #[test]
     fn sweep_excludes_exactly_100_pages_and_covers_patch_targets() {
-        let ranges = sweep_ranges();
+        let recipe = &recipe::RECIPES[0];
+        let ranges = sweep_ranges(recipe);
         let pages: usize = ranges
             .iter()
             .map(|(start, end)| (end - start).div_ceil(0x1000))
             .sum();
-        assert_eq!(pages, TEXT_SIZE.div_ceil(0x1000) - 100);
-        assert_eq!(ranges.last().unwrap().1, TEXT_START + TEXT_SIZE);
+        assert_eq!(pages, recipe.text_size.div_ceil(0x1000) - 100);
+        assert_eq!(ranges.last().unwrap().1, TEXT_START + recipe.text_size);
         for pair in ranges.windows(2) {
             assert!(pair[0].1 < pair[1].0);
         }
-        for site in [FILE_RESOLVER, PATH_GATE, CERT_DEV, SYSTEM_CERT, COMMON_NAME] {
+        for site in [
+            recipe.resolver,
+            recipe.gate,
+            recipe.helper,
+            recipe.result_bl,
+            recipe.result_edi,
+        ] {
             assert!(
                 ranges
                     .iter()
                     .any(|&(start, end)| site >= start && site < end)
             );
         }
+    }
+
+    #[test]
+    fn newer_sweep_reads_every_text_page_from_separate_storage() {
+        let recipe = &recipe::RECIPES[1];
+        assert_eq!(sweep_ranges(recipe), vec![(0x1000, 0x3784b4c)]);
+        assert!(recipe.stub_rva() >= TEXT_START + recipe.text_size);
     }
 
     #[test]

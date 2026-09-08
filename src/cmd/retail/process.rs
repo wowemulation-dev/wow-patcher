@@ -231,6 +231,16 @@ impl Process {
         Ok(())
     }
 
+    pub fn protect(&self, address: usize, length: usize, protection: u32) -> Result<u32> {
+        let mut old = 0;
+        if unsafe { VirtualProtectEx(self.handle.0, address as _, length, protection, &mut old) }
+            == 0
+        {
+            return Err(io::Error::last_os_error().into());
+        }
+        Ok(old)
+    }
+
     pub fn allocate(&self, length: usize, protection: u32) -> Result<usize> {
         let address = unsafe {
             VirtualAllocEx(
@@ -400,6 +410,14 @@ mod tests {
         let address = process.allocate(32, PAGE_READONLY).unwrap();
         process.write(address, b"verified write").unwrap();
         assert_eq!(process.read(address, 14).unwrap(), b"verified write");
+        assert_eq!(process.protection(address).unwrap(), PAGE_READONLY);
+        let previous = process
+            .protect(address, 32, PAGE_EXECUTE_READWRITE)
+            .unwrap();
+        assert_eq!(previous, PAGE_READONLY);
+        process.write(address, b"temporary stub").unwrap();
+        assert_eq!(process.protection(address).unwrap(), PAGE_EXECUTE_READWRITE);
+        process.protect(address, 32, previous).unwrap();
         assert_eq!(process.protection(address).unwrap(), PAGE_READONLY);
         assert_eq!(unsafe { WaitForSingleObject(observer.0, 0) }, WAIT_TIMEOUT);
         drop(process);

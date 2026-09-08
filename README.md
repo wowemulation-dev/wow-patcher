@@ -84,7 +84,7 @@ cargo build --release
 
 The [runtime `launch` command](docs/retail-runtime.md) selects its strategy from
 the file version. Retail 12.x and later use the new strategy; its verified
-Windows x64 recipe currently covers **12.0.7.68887**.
+Windows x64 recipes cover **12.0.7.68887** and **12.1.0.69587**.
 
 Run `wow-patcher --help` to see all options. The most common invocations:
 

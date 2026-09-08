@@ -199,8 +199,8 @@ pub enum Commands {
 
     /// Launch with a runtime strategy selected from the executable's file version.
     ///
-    /// Retail 12.x and later use the new strategy; currently its only verified
-    /// recipe is 12.0.7.68887, which requires --server-cert and Windows x64.
+    /// Retail 12.x and later use the new strategy; verified recipes cover
+    /// 12.0.7.68887 and 12.1.0.69587, requiring --server-cert and Windows x64.
     /// Documented older version families use the existing runtime strategy.
     Launch {
         /// Seconds to wait for decryption in the older strategy (0 = auto-detect).

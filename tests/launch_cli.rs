@@ -131,6 +131,9 @@ fn newer_retail_versions_enter_retail_but_require_a_matching_recipe() {
         "12.0.7.68886",
         "12.0.7.68888",
         "12.1.0.68914",
+        "12.1.0.69586",
+        "12.1.0.69588",
+        "12.0.7.69587",
         "13.0.0.70000",
     ] {
         let dir = TempDir::new().unwrap();
@@ -213,4 +216,40 @@ fn missing_version_metadata_does_not_fall_back_to_a_filename_heuristic() {
             .contains("Cannot read the executable's file version")
     );
     assert_eq!(std::fs::read(input).unwrap(), b"unsupported image");
+}
+
+#[test]
+fn newer_verified_version_requires_certificate_without_starting() {
+    let dir = TempDir::new().unwrap();
+    let input = versioned_client(&dir, "12.1.0.69587", "Wow.exe");
+    let result = cli(&["launch", "-l", input.to_str().unwrap(), "-v"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("launch strategy: Retail"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("requires --server-cert"));
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+#[test]
+fn forged_version_metadata_cannot_bypass_image_identity_check() {
+    let dir = TempDir::new().unwrap();
+    let input = versioned_client(&dir, "12.1.0.69587", "Wow.exe");
+    std::fs::write(dir.path().join("Wow_loader.dll"), b"invalid loader").unwrap();
+    std::fs::create_dir(dir.path().join("WTF")).unwrap();
+    std::fs::write(dir.path().join("WTF/Config.wtf"), b"").unwrap();
+    let cert = dir.path().join("public.pem");
+    std::fs::write(
+        &cert,
+        b"-----BEGIN CERTIFICATE-----\nplaceholder\n-----END CERTIFICATE-----",
+    )
+    .unwrap();
+    let result = cli(&[
+        "launch",
+        "-l",
+        input.to_str().unwrap(),
+        "--server-cert",
+        cert.to_str().unwrap(),
+    ]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("Unverified executable: SHA-256"));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("Created client PID"));
 }

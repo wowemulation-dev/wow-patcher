@@ -25,17 +25,20 @@ pub(crate) fn select_strategy(version: Version) -> Result<LaunchStrategy, String
     Err(format!(
         "No launch strategy for {version}. Supported families: 1.13.x, 1.14.x, \
          2.5.0-2.5.4, 3.4.0-3.4.4, 4.4.0-4.4.2, 9.x, 10.x; \
-         the new retail recipe requires exactly 12.0.7.68887. No process started."
+         retail recipes exist for 12.0.7.68887 and 12.1.0.69587. No process started."
     ))
 }
 
 pub(crate) fn validate_retail_recipe(version: Version) -> Result<(), String> {
-    if version == Version::new(12, 0, 7, 68887) {
+    if matches!(
+        (version.major, version.minor, version.patch, version.build),
+        (12, 0, 7, 68887) | (12, 1, 0, 69587)
+    ) {
         Ok(())
     } else {
         Err(format!(
-            "No verified retail recipe for {version}; the current recipe requires exactly \
-             12.0.7.68887. No process started."
+            "No verified retail recipe for {version}; available recipes require exactly \
+             12.0.7.68887 or 12.1.0.69587. No process started."
         ))
     }
 }
@@ -50,6 +53,7 @@ mod tests {
             Version::new(12, 0, 0, 65655),
             Version::new(12, 0, 7, 68887),
             Version::new(12, 1, 0, 68914),
+            Version::new(12, 1, 0, 69587),
             Version::new(13, 0, 0, 70000),
             Version::new(u16::MAX, 0, 0, u32::MAX),
         ] {
@@ -69,7 +73,16 @@ mod tests {
             validate_retail_recipe(Version::new(12, 0, 7, 68887)),
             Ok(())
         );
+        assert_eq!(
+            validate_retail_recipe(Version::new(12, 1, 0, 69587)),
+            Ok(())
+        );
         for version in [
+            Version::new(12, 1, 0, 69586),
+            Version::new(12, 1, 0, 69588),
+            Version::new(12, 0, 7, 69587),
+            Version::new(12, 1, 1, 69587),
+            Version::new(13, 1, 0, 69587),
             Version::new(12, 0, 0, 65655),
             Version::new(12, 0, 7, 68886),
             Version::new(12, 0, 7, 68888),
