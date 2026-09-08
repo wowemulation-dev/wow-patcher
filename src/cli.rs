@@ -148,6 +148,24 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Launch retail 12.0.7.68887 with in-memory certificate patches (Windows x64).
+    LaunchRetail {
+        /// Public server certificate in PEM format (no private key).
+        #[arg(long, value_name = "FILE")]
+        server_cert: PathBuf,
+
+        /// Portal suffix; pass an empty string to use the configured portal verbatim.
+        #[arg(long, allow_hyphen_values = true)]
+        portal_suffix: Option<String>,
+
+        /// Client configuration filename under the game's WTF directory.
+        #[arg(long, default_value = "Config.wtf")]
+        config: String,
+
+        /// Timeout in seconds for each startup phase.
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(3..=300))]
+        timeout: u64,
+    },
     /// Print version information
     Version {
         /// Show detailed version information
@@ -243,6 +261,54 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::LaunchRetail {
+            server_cert,
+            portal_suffix,
+            config,
+            timeout,
+        }) => {
+            if cli.rsa_file.is_some()
+                || cli.rsa_hex.is_some()
+                || cli.portal_domain.is_some()
+                || cli.cert_bundle.is_some()
+                || cli.cert_bundle_url.is_some()
+                || cli.cdns_url.is_some()
+                || cli.patches != "all"
+            {
+                return Err("launch-retail accepts Ed25519 keys, --version-url and --portal-suffix; RSA, bundle, domain, CDN and patch-group options do not apply".into());
+            }
+            if cli.ed25519_file.is_some() && cli.ed25519_hex.is_some() {
+                return Err("Use only one of --ed25519-file and --ed25519-hex".into());
+            }
+            let mut keys = KeyConfig::default();
+            if let Some(path) = cli.ed25519_file {
+                keys = keys.with_ed25519_from_file(path)?;
+            } else if let Some(value) = cli.ed25519_hex {
+                keys = keys.with_ed25519_from_hex(&value)?;
+            }
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            {
+                crate::cmd::retail::run(crate::cmd::retail::Options {
+                    executable: cli
+                        .location
+                        .ok_or("Specify the client executable with -l")?
+                        .into(),
+                    server_cert,
+                    portal_suffix,
+                    config,
+                    version_url: cli.version_url,
+                    ed25519: keys.ed25519_public_key().to_vec(),
+                    timeout: std::time::Duration::from_secs(timeout),
+                    dry_run: cli.dry_run,
+                    verbose: cli.verbose,
+                })
+            }
+            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+            {
+                let _ = (server_cert, portal_suffix, config, timeout, keys);
+                Err("launch-retail requires a Windows x64 patcher executable".into())
+            }
+        }
         Some(Commands::Version { detailed }) => {
             if detailed {
                 println!("{}", crate::version::detailed_info());
@@ -263,7 +329,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(target_os = "windows")]
             {
                 crate::cmd::dump::win::dump_text_section(&location, &output, 0, cli.verbose)?;
-                return Ok(());
+                Ok(())
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -309,7 +375,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     post_decrypt_wait,
                     cli.verbose,
                 )?;
-                return Ok(());
+                Ok(())
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -376,7 +442,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         verbose: cli.verbose,
                     },
                 )?;
-                return Ok(());
+                Ok(())
             }
             #[cfg(not(target_os = "windows"))]
             {

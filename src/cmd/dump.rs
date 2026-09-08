@@ -413,7 +413,7 @@ pub mod win {
                             &mut br,
                         )
                     };
-                    current_is_pe = ok != 0 && br == 2 && mz == [b'M', b'Z'];
+                    current_is_pe = ok != 0 && br == 2 && mz == *b"MZ";
                     last_alloc_base = alloc_base;
                 }
                 current_extent += region_size;

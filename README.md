@@ -82,6 +82,10 @@ cargo build --release
 
 ## Usage
 
+For retail **12.0.7.68887** on Windows x64, see the opt-in
+[runtime launch command](docs/retail-runtime.md). Other retail builds require
+separate validation.
+
 Run `wow-patcher --help` to see all options. The most common invocations:
 
 ```bash
