@@ -909,7 +909,7 @@ pub mod win {
 
             if mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE && alloc_base != 0 {
                 if alloc_base != current_alloc_base {
-                    if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
+                    if current_is_pe && (LOWER..=UPPER).contains(&current_extent) {
                         return Some(current_alloc_base);
                     }
                     current_alloc_base = alloc_base;
@@ -925,11 +925,11 @@ pub mod win {
                             &mut br,
                         )
                     };
-                    current_is_pe = ok != 0 && br == 2 && mz == [b'M', b'Z'];
+                    current_is_pe = ok != 0 && br == 2 && mz == *b"MZ";
                 }
                 current_extent += region_size;
             } else if alloc_base != current_alloc_base && current_alloc_base != 0 {
-                if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
+                if current_is_pe && (LOWER..=UPPER).contains(&current_extent) {
                     return Some(current_alloc_base);
                 }
                 current_alloc_base = 0;
@@ -943,7 +943,7 @@ pub mod win {
             }
             addr = next;
         }
-        if current_is_pe && current_extent >= LOWER && current_extent <= UPPER {
+        if current_is_pe && (LOWER..=UPPER).contains(&current_extent) {
             return Some(current_alloc_base);
         }
         None
