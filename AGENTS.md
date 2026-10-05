@@ -512,7 +512,7 @@ Use accurate terms: "add" for new features, "fix" for bug fixes, "update" for en
 - **No `rustfmt.toml` or `clippy.toml`**: uses default Rust formatting and linting.
 - **No `rust-toolchain.toml`**: relies on edition 2024 and MSRV 1.92.
 - **No `CHANGELOG.md`**: not present.
-- **Markdown linting**: `.markdownlint.jsonc`, `.markdownlintignore` configured (uses `markdownlint-cli`).
+- **Markdown linting**: `mado.toml` configured (uses `mado`).
 - **Editor config**: `.editorconfig` with 4-space indent for Rust, LF line endings.
 - **Build script**: `build.rs` sets `GIT_COMMIT`, `GIT_VERSION`, `BUILD_DATE`, `BUILT_BY` env vars.
 - **Release profile**: LTO enabled, single codegen unit, stripped symbols.

@@ -17,7 +17,7 @@ node = "24"
 
 # ── Linting and auditing ─────────────────────
 "cargo:cargo-deny" = "latest"
-"npm:markdownlint-cli" = "latest"
+"cargo:https://github.com/akiomik/mado" = { version = "tag:v0.3.2", crate = "mado", bin = "mado" }
 actionlint = "latest"
 
 # ── Documentation ─────────────────────────────
