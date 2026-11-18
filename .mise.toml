@@ -4,7 +4,6 @@
 [tools]
 # ── Toolchain ──────────────────────────────────
 rust = "stable"
-node = "24"
 
 # ── Build tools ────────────────────────────────
 "cargo:cross" = "latest"
@@ -18,7 +17,7 @@ node = "24"
 # ── Linting and auditing ─────────────────────
 "cargo:cargo-deny" = "latest"
 "cargo:https://github.com/akiomik/mado" = { version = "tag:v0.3.2", crate = "mado", bin = "mado" }
-actionlint = "latest"
+jactionlint = "latest"
 
 # ── Documentation ─────────────────────────────
 "cargo:mdbook" = "latest"
@@ -27,3 +26,8 @@ actionlint = "latest"
 # ── Profiling ─────────────────────────────────
 "cargo:flamegraph" = "latest"
 "cargo:inferno" = "latest"
+
+# ── Protocol and application tools ────────────
+protobuf = "latest"
+"cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = ["postgres", "rustls"] }
+oauth2c = "latest"
