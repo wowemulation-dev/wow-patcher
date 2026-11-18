@@ -180,6 +180,7 @@ pub mod win {
 
         let process_handle = process_info.hProcess;
         let thread_handle = process_info.hThread;
+
         let _guard = scopeguard(process_handle, thread_handle);
 
         if verbose {
@@ -307,10 +308,16 @@ pub mod win {
                 )
             };
 
+            // Accept MEM_IMAGE (Windows) or MEM_MAPPED (Wine 11 reports
+            // the main module this way) at the preferred base.
+            // Wine maps the image as several MEM_IMAGE regions whose first
+            // page may be only 0x1000 bytes, so accept the preferred base as
+            // soon as it is committed and image/mapped there.
             if result != 0
-                && mbi.RegionSize > 0x1000
+                && mbi.RegionSize >= 0x1000
                 && mbi.State == MEM_COMMIT
-                && mbi.Type == MEM_IMAGE
+                && (mbi.Type == MEM_IMAGE || mbi.Type == 0x40000)
+                && mbi.BaseAddress as usize == 0x140000000
             {
                 return Ok(mbi.BaseAddress as usize);
             }
