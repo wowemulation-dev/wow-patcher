@@ -11,14 +11,14 @@ World of Warcraft client patcher that modifies WoW binaries to enable connection
 
 Supports Retail, Classic, and Classic Era clients. Works as both a Rust library crate and a CLI binary (behind the `cli` feature flag).
 
-- **Tech stack**: Rust (Edition 2024, MSRV 1.92), binary parsing via `goblin` (PE/Mach-O/ELF), pattern matching with `regex`, hex decoding. Runtime mode uses `windows-sys` for the Win32 process APIs.
+- **Tech stack**: Rust (Edition 2024, MSRV 1.98), binary parsing via `goblin` (PE/Mach-O/ELF), pattern matching with `regex`, hex decoding. Runtime mode uses `windows-sys` for the Win32 process APIs.
 - **License**: Dual-licensed under MIT OR Apache-2.0.
 - **Binary formats**: PE (Windows), Mach-O (macOS), ELF (Linux).
 - **Runtime mode platforms**: Windows native and Linux+Wine. The `dump-text` subcommand demonstrates that `CreateProcessA`, `NtSuspendProcess`, `ReadProcessMemory`, `VirtualQueryEx`, and `WriteProcessMemory` all work under Wine. Earlier project notes claimed otherwise; that claim was wrong.
 
 ## Reference Implementation
 
-Based on Arctium WoW-Launcher (`~/Repos/github.com/Arctium/WoW-Launcher`), a C#/.NET project that uses runtime patching. Arctium creates a suspended Windows process and patches memory before execution using NT API calls:
+Based on Arctium WoW-Launcher (`~/References/github.com/Arctium/WoW-Launcher`), a C#/.NET project that uses runtime patching. Arctium creates a suspended Windows process and patches memory before execution using NT API calls:
 
 - `NtSuspendProcess` / `NtResumeProcess`
 - `WriteProcessMemory`
@@ -26,7 +26,7 @@ Based on Arctium WoW-Launcher (`~/Repos/github.com/Arctium/WoW-Launcher`), a C#/
 
 The static-patch mode in this crate (default `wow-patcher` invocation) implements the on-disk subset of those patches: RSA moduli, Ed25519 public key, portal hostname, version/CDNs URLs. The runtime mode (`launch` subcommand) ports the remainder: certificate-bundle replacement, certificate-chain check bypass, integrity checks, and dynamic patch sites that have no on-disk byte sequence because the surrounding code is Arxan-encrypted at rest.
 
-The Arctium Classic-DLL (`~/Repos/github.com/Arctium/Classic-DLL`) provides runtime hooks (CASC file loading, Lua restrictions) via DLL injection. Those features are out of scope for this crate; they would belong in a separate DLL-injector tool that uses the same launcher infrastructure.
+The Arctium Classic-DLL (`~/References/github.com/Arctium/Classic-DLL`) provides runtime hooks (CASC file loading, Lua restrictions) via DLL injection. Those features are out of scope for this crate; they would belong in a separate DLL-injector tool that uses the same launcher infrastructure.
 
 ## Commands
 
@@ -53,6 +53,7 @@ cargo fmt                     # Format code
 cargo fmt -- --check          # Check formatting
 cargo clippy -- -D warnings   # Lint with warnings as errors
 cargo doc --no-deps           # Build documentation
+jactionlint --strict-exit     # Lint GitHub Actions workflows (fails on warnings too)
 ```
 
 ### Running
@@ -72,6 +73,14 @@ Before considering a task complete:
 2. `cargo clippy -- -D warnings`
 3. `cargo nextest run`
 4. `cargo build`
+
+Changes to `.github/workflows/` must pass `jactionlint` without warnings or errors before committing:
+
+```bash
+jactionlint --strict-exit
+```
+
+`--strict-exit` makes the linter exit non-zero on warning- and info-level findings, not just errors.
 
 ## Architecture
 
@@ -508,9 +517,10 @@ Use accurate terms: "add" for new features, "fix" for bug fixes, "update" for en
 
 ## Configuration Files
 
-- **No CI/CD**: no GitHub Actions or other CI pipelines configured.
-- **No `rustfmt.toml` or `clippy.toml`**: uses default Rust formatting and linting.
-- **No `rust-toolchain.toml`**: relies on edition 2024 and MSRV 1.92.
+- **CI/CD**: GitHub Actions (`.github/workflows/ci.yml`) with nextest, clippy, deny, docs, coverage.
+- **Workflow linting**: `.github/workflows/` must pass `jactionlint` without warnings or errors.
+- **`rustfmt.toml` or `clippy.toml`**: not present; uses default Rust formatting and linting.
+- **`rust-toolchain.toml`**: channel 1.98 (MSRV), components: rustfmt, clippy, rust-src, rust-analyzer.
 - **No `CHANGELOG.md`**: not present.
 - **Markdown linting**: `mado.toml` configured (uses `mado`).
 - **Editor config**: `.editorconfig` with 4-space indent for Rust, LF line endings.
