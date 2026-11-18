@@ -1,0 +1,21 @@
+# Nextest configuration
+# See https://nexte.st/book/configuration.html
+
+[profile.default]
+# Show output as tests complete
+failure-output = "immediate-final"
+# Timeout for slow tests
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+# CI-optimized settings for faster feedback
+failure-output = "immediate-final"
+# Faster timeout for CI
+slow-timeout = { period = "30s", terminate-after = 2 }
+# Reuse test binaries between runs for performance
+retries = 2
+
+[profile.release]
+# Release-mode testing for performance verification
+failure-output = "immediate-final"
+slow-timeout = { period = "120s", terminate-after = 3 }

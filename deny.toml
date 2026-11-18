@@ -1,0 +1,82 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Check against these targets
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# Security advisories from RustSec
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0543: chrono unmaintained. Used only in build.rs to compute
+    # the build timestamp (not security-critical). No safe upgrade.
+    "RUSTSEC-2026-0543",
+]
+
+# License compliance
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+[licenses]
+# Allowed licenses for dependencies
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "Unlicense",
+    "ISC",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+    "AGPL-3.0-only",
+]
+confidence-threshold = 0.8
+
+# Exceptions for specific crates with non-standard licenses
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+# Crate bans and duplicate detection
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow-wildcard-paths = true  # Allow workspace path dependencies without version constraints
+
+# Banned crates
+deny = [
+    # Use rustls instead of native-tls/openssl for better security
+    { crate = "openssl", reason = "Use rustls for TLS" },
+    { crate = "openssl-sys", reason = "Use rustls for TLS" },
+]
+
+skip = []
+skip-tree = []
+
+# Source restrictions
+# https://embarkstudios.github.io/cargo-deny/checks/sources/cfg.html
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+# [sources.allow-org]
+# Allow git sources from our organization if needed
+# github = ["wowemulation-dev"]
