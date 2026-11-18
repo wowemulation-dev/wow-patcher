@@ -1,0 +1,319 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+  merge_group:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default: jobs that only read the repository. Jobs that need
+# nothing set "permissions: {}" explicitly; the changed-files job keeps its
+# own job-level override.
+permissions:
+  contents: read
+
+jobs:
+  # Detect which files have changed
+  changed-files:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      rust_changed: ${{ steps.changes.outputs.rust_changed }}
+      deps_changed: ${{ steps.changes.outputs.deps_changed }}
+      ci_changed: ${{ steps.changes.outputs.ci_changed }}
+      any_changed: ${{ steps.changes.outputs.any_changed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        with:
+          files_yaml: |
+            rust:
+              - 'src/**/*.rs'
+              - 'tests/**'
+            deps:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            ci:
+              - '.github/workflows/**'
+
+      - name: Determine changes
+        id: changes
+        env:
+          RUST_CHANGED: ${{ steps.changed-files.outputs.rust_any_changed }}
+          DEPS_CHANGED: ${{ steps.changed-files.outputs.deps_any_changed }}
+          CI_CHANGED: ${{ steps.changed-files.outputs.ci_any_changed }}
+        run: |
+          # On initial commits, tj-actions/changed-files produces empty
+          # outputs because there is no previous commit to diff against.
+          # Treat empty values as "true" so all jobs run.
+          [ -z "$RUST_CHANGED" ] && RUST_CHANGED="true"
+          [ -z "$DEPS_CHANGED" ] && DEPS_CHANGED="true"
+          [ -z "$CI_CHANGED" ] && CI_CHANGED="true"
+
+          echo "Rust code changed: $RUST_CHANGED"
+          echo "Dependencies changed: $DEPS_CHANGED"
+          echo "CI changed: $CI_CHANGED"
+
+          {
+            echo "rust_changed=$RUST_CHANGED"
+            echo "deps_changed=$DEPS_CHANGED"
+            echo "ci_changed=$CI_CHANGED"
+
+            if [ "$RUST_CHANGED" == "true" ] || [ "$DEPS_CHANGED" == "true" ] || [ "$CI_CHANGED" == "true" ]; then
+              echo "any_changed=true"
+            else
+              echo "any_changed=false"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+  # Format, compilation, and lint checks
+  quick-checks:
+    name: Quick Checks
+    needs: changed-files
+    if: needs.changed-files.outputs.any_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.98
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "quick-checks-${{ hashFiles('**/Cargo.lock') }}"
+          cache-on-failure: true
+          cache-all-crates: true
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Check compilation
+        run: cargo check --all-targets
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+  # Dependency security and license checks
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check dependencies
+        uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2.1.2
+        with:
+          command: check
+          rust-version: "1.98"
+
+  # Test suite on MSRV and stable
+  test:
+    name: Test (${{ matrix.rust }})
+    needs: [quick-checks, changed-files]
+    if: needs.changed-files.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust: 1.98
+          - rust: stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-nextest
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "tests-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}"
+          cache-on-failure: true
+          cache-all-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Test default features
+        run: cargo nextest run --profile ci --all-targets
+
+      - name: Test no default features
+        run: cargo nextest run --profile ci --no-default-features --all-targets
+
+  # Documentation build
+  docs:
+    name: Documentation
+    needs: changed-files
+    if: needs.changed-files.outputs.rust_changed == 'true' || needs.changed-files.outputs.deps_changed == 'true' || needs.changed-files.outputs.ci_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.98
+
+      - name: Cache documentation dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "docs-${{ hashFiles('**/Cargo.lock') }}"
+          cache-on-failure: true
+          cache-all-crates: true
+
+      - name: Build documentation
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # Coverage collection
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable toolchain with LLVM tools
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - name: Cache coverage dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "coverage-${{ hashFiles('**/Cargo.lock') }}"
+          cache-on-failure: true
+          cache-all-crates: true
+
+      - name: Install cargo-llvm-cov for coverage collection
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install cargo-nextest for faster coverage collection
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-nextest
+
+      - name: Collect coverage
+        run: cargo llvm-cov nextest --lcov --output-path lcov.info
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Branch protection gate
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [changed-files, quick-checks, deny, test, docs, coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check all jobs
+        env:
+          ANY_CHANGED: ${{ needs.changed-files.outputs.any_changed }}
+          QUICK_CHECKS_RESULT: ${{ needs.quick-checks.result }}
+          DENY_RESULT: ${{ needs.deny.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+        run: |
+          echo "Any changed: $ANY_CHANGED"
+          echo "Job results:"
+          echo "  quick-checks: $QUICK_CHECKS_RESULT"
+          echo "  deny: $DENY_RESULT"
+          echo "  test: $TEST_RESULT"
+          echo "  docs: $DOCS_RESULT"
+
+          # Check for failures (skipped jobs are OK)
+          failed=false
+
+          if [[ "$QUICK_CHECKS_RESULT" == "failure" ]]; then
+            echo "quick-checks failed"
+            failed=true
+          fi
+
+          if [[ "$DENY_RESULT" == "failure" ]]; then
+            echo "deny failed"
+            failed=true
+          fi
+
+          if [[ "$TEST_RESULT" == "failure" ]]; then
+            echo "test failed"
+            failed=true
+          fi
+
+          if [[ "$DOCS_RESULT" == "failure" ]]; then
+            echo "docs failed"
+            failed=true
+          fi
+
+          if [[ "$failed" == "true" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+
+          echo "All required jobs succeeded (or were skipped)"
