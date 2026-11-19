@@ -115,7 +115,7 @@ Both mechanisms require the RSA modulus to be patched via `--rsa-file`
 so the client trusts the bundle's signature.
 
 Generate a bundle with `scripts/gen-cert-bundle.py`. See
-`docs/custom-cert-bundle.md` for the full guide.
+`./custom-cert-bundle.md` for the full guide.
 
 ### URL Types
 

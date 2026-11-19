@@ -41,7 +41,7 @@ cargo clean            # Clean build artifacts
 ### Testing
 
 ```bash
-cargo nextest run                    # Run all tests (~69 tests)
+cargo nextest run                    # Run all tests (~149 tests)
 cargo nextest run -- --nocapture     # Run tests with output
 cargo nextest run test_name          # Run specific test
 ```
@@ -88,22 +88,30 @@ jactionlint --strict-exit
 
 ```
 src/
-  lib.rs          Library root. Re-exports: WowPatcherError, KeyConfig, Patcher
+  lib.rs          Library root. Re-exports: WowPatcherError, KeyConfig, PatchGroup, Patcher
   main.rs         CLI entry point. Calls cli::run()
   cli.rs          clap argument parsing (behind "cli" feature)
   patcher.rs      Builder-pattern API for library consumers
+  cert_bundle.rs  CertBundleConfig: signed bundle loading/validation
+  patch_group.rs  PatchGroup bitflags + --patches parsing
+  portal_domain.rs PortalDomain: BGS portal suffix validation
   binary/
     mod.rs        Pattern type (Vec<i16>), patch(), find_pattern(), traits
     section.rs    PE/Mach-O section detection via goblin
   cmd/
     mod.rs        Module re-export
-    execute.rs    execute_patch() -- main patching orchestration (654 lines)
+    execute.rs    execute_patch() -- main patching orchestration
+    launch.rs     runtime launch (legacy strategy, Windows/Wine)
+    dump.rs       dump-text and dump-sections (Windows/Wine)
+    launch_strategy.rs  strategy selection from file version
+    retail/       retail runtime strategy (12.x recipes, Windows x64)
   errors/
     mod.rs        WowPatcherError, ErrorCategory, convenience constructors
   keys/
     mod.rs        KeyConfig struct with validation and multiple loaders
   patterns/
-    mod.rs        10 static patterns using OnceLock<Pattern>
+    mod.rs        11 static patterns using OnceLock<Pattern>
+    runtime/      ported Arctium patterns (common, windows)
   platform/
     mod.rs        ClientType enum, detect_client_type(), version extraction
     darwin.rs     macOS codesign removal via codesign CLI
@@ -119,7 +127,7 @@ src/
 
 - **Patcher (`src/patcher.rs`)**: Builder-pattern API. Configures input/output paths, keys, CDN URLs, dry_run, strip_codesign, verbose. Delegates to `cmd::execute::execute_patch()`.
 - **Binary module (`src/binary/`)**: `Pattern` is `Vec<i16>` where `-1` is a wildcard matching any byte. `patch()` finds the first occurrence and replaces bytes.
-- **Patterns (`src/patterns/`)**: 10 patterns defined via `OnceLock<Pattern>` for thread-safe lazy initialization.
+- **Patterns (`src/patterns/`)**: 11 patterns defined via `OnceLock<Pattern>` for thread-safe lazy initialization.
 - **Keys (`src/keys/`)**: `KeyConfig` struct with validation (size, zero bytes, entropy checks). Loaders: `trinity_core()`, `new()`, `custom()`, `from_hex()`, `from_files()`.
 - **Trinity (`src/trinity/`)**: Constants `RSA_MODULUS` (256 bytes), `CRYPTO_ED25519_PUBLIC_KEY` (32 bytes). URL generators for version and CDNs endpoints.
 - **Errors (`src/errors/`)**: `WowPatcherError` with `ErrorCategory` enum (FileOperationError, ValidationError, PatchingError, PlatformError). Has context HashMap for metadata.
@@ -162,7 +170,7 @@ The patcher's static `.rdata` rewrites only cover the auth-flow critical path. T
 - **`nydus-cosmetic`**: rewrite the 5 cosmetic `nydus.battle.net` URLs (driver-unsupported, trial-restriction, gametime, checkout, checkoutnav). NOT covered by `--bgs-portal-domain` -- it deliberately scopes only to `.actual.battle.net`. Future opt-in flag.
 - **`launcher-login`**: redirect the Phoenix launcher-login registry-key path. Useful for running stock + patched clients side-by-side without WEB_TOKEN collision.
 - **`cert-runtime`**: runtime memory-write patches (`.text` section) for cert-validation conditional branches: `CertBundle` JZ-NOP, `CertCommonName` MOV-1, `CertChain` flag flip. Arctium uses these in dev mode + 1.14+ legacy. We rely on the static RSA-modulus replacement instead.
-- **`arxan-runtime`**: anti-crash + anti-tamper memory writes Arctium does at process launch. Requires the deferred runtime `launch` subcommand.
+- **`arxan-runtime`**: anti-crash + anti-tamper memory writes Arctium does at process launch. Would use the `launch` subcommand infrastructure.
 
 See `<management-repo>/src/reverse-engineering/wow-classic/_cross-build/patcher-coverage.md` for the canonical group catalog with per-build presence + Arctium-vs-us coverage matrix.
 
@@ -210,7 +218,7 @@ Custom `WowPatcherError` type with `ErrorCategory` enum.
 - `SCREAMING_SNAKE_CASE` for constants and `OnceLock` statics.
 - Descriptive names, avoid abbreviations.
 
-## Defined Patterns (10 total)
+## Defined Patterns (11 total)
 
 | Pattern           | Signature/Value                                         | Length |
 | ----------------- | ------------------------------------------------------- | ------ |
@@ -224,8 +232,9 @@ Custom `WowPatcherError` type with `ErrorCategory` enum.
 | VersionUrl (v3)   | `https://%s.version.battle.net/v2/products/%s/%s`       | 48     |
 | CdnsUrl           | `http://%s.patch.battle.net:1119/%s/cdns`               | 40     |
 | CertBundle        | `{"Created":`                                           | 11     |
+| CertBundleUrl     | `http://nydus.battle.net/Bnet/zxx/client/bgs-key-fingerprint` | 59 |
 
-The CertBundle pattern is defined but never called from `execute_patch()`. Certificate bundle replacement is not implemented.
+All patterns are called from `execute_patch()`. Cert bundle injection (`--cert-bundle`) and download-URL rewrite (`--cert-bundle-url`) are input-gated: they only fire when the corresponding flag is provided.
 
 ## Portal pattern NUL-collapse pitfall
 
@@ -316,10 +325,6 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 
 ## Known Issues
 
-### Certificate Bundle Pattern Unused
-
-`cert_bundle_pattern()` is defined in `src/patterns/mod.rs` but is never called from `execute_patch()`. Certificate bundle replacement is not implemented.
-
 ### Version Extraction Stubs
 
 `extract_version()` in `src/platform/mod.rs` parses binaries with goblin but returns `None` for both PE and Mach-O. Only the regex fallback (`extract_version_fallback`) works.
@@ -330,25 +335,26 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 - `platform::windows::find_wow_executable()` — never called externally.
 - Error convenience constructors (`new_file_error`, `new_validation_error`, `new_patching_error`, `new_platform_error`) — never called from application code.
 
-### Example Bug
-
-`examples/custom_keys.rs` uses `"C".repeat(512)` and `"D".repeat(64)` which decode to all-identical bytes (`[0xCC; 256]` and `[0xDD; 32]`). These fail the `KeyConfig::validate()` entropy check.
-
 ## Implemented Features
 
-1. Portal pattern: `.actual.battle.net` replacement with `.localhost` (NUL-padded to 18 bytes). See "Portal pattern NUL-collapse pitfall" below.
+1. Portal pattern: `.actual.battle.net` replacement with `.actual.<domain>` (default `wowemu.dev`; NUL-padded for shorter domains). See "Portal pattern NUL-collapse pitfall" below.
 2. Three RSA modulus patterns: ConnectTo, Signature, and Crypto (with fallback chain). Full 256-byte replacement.
 3. Ed25519 public key pattern: Crypto Ed25519 pattern. Full 32-byte replacement.
 4. Version URL patching: three URL patterns (v1 HTTP, v2 HTTPS, v3 unified API) with Arctium CDN defaults.
 5. CDNs URL patching: HTTP CDN pattern with Arctium CDN default.
-6. macOS code signing removal via `codesign --remove-signature`.
-7. Section validation: verifies patches target data sections, not code sections.
-8. Client type detection: path-based heuristic for Retail, Classic, Classic Era.
-9. Library API: builder-pattern `Patcher` struct with `WowPatcherError`, `KeyConfig` re-exports.
-10. Custom key support: load from bytes, hex strings, or files.
-11. Custom CDN support: override version and CDNs URLs via CLI or API.
-12. Dry run mode: preview patches without writing files.
-13. Build metadata: git commit, version, build date embedded at compile time.
+6. Cert bundle injection: `--cert-bundle` replaces the embedded `{"Created":` slot (1.14.x / 2.5.3).
+7. Cert bundle URL rewrite: `--cert-bundle-url` replaces the 59-byte download URL literal (1.13.2 / 1.14.x / 2.5.3).
+8. Selectable patch groups: `--patches` with `all`, `rsa`, `ed25519`, `portal`, `version`, `cdns`, `cert-bundle`, `cert-bundle-url`.
+9. macOS code signing removal via `codesign --remove-signature`.
+10. Section validation: verifies patches target data sections, not code sections.
+11. Client type detection: path-based heuristic for Retail, Classic, Classic Era.
+12. Runtime `launch` subcommand: strategy selected from file version; verified retail recipes for 12.0.7.68887 and 12.1.0.69587 (Windows x64); older version families use the existing runtime strategy.
+13. `dump-text` and `dump-sections` subcommands: recover Arxan-decrypted PE sections from a running client (Windows/Wine).
+14. Library API: builder-pattern `Patcher` struct with `WowPatcherError`, `KeyConfig`, `PatchGroup` re-exports.
+15. Custom key support: load from bytes, hex strings, or files.
+16. Custom CDN support: override version and CDNs URLs via CLI or API.
+17. Dry run mode: preview patches without writing files.
+18. Build metadata: git commit, version, build date embedded at compile time.
 
 ## Library API
 
@@ -386,7 +392,7 @@ Validation rules:
 
 - **Unit tests**: inline with each module using `#[cfg(test)]`.
 - **Integration tests**: in `tests/` directory, use `tempfile` for temporary files.
-- **Test coverage**: ~69 tests across all modules.
+- **Test coverage**: ~149 tests across all modules.
 - **Mock executables**: created in integration tests using `create_mock_executable()`.
 
 When adding features:
@@ -415,55 +421,30 @@ The integration test `test_patching_with_real_patterns` verifies the full 256-by
 
 ## Features Not Implemented
 
-### Certificate Bundle Replacement
+### Remaining runtime-mode work
 
-Pattern is defined but patching logic is not implemented. Arctium replaces the Blizzard certificate bundle (a ~30KB JSON structure starting with `{"Created":`) with a custom certificate bundle containing self-signed certificates.
+Runtime mode is implemented: the `launch` subcommand selects its strategy
+from the executable's file version. Verified retail recipes cover
+12.0.7.68887 and 12.1.0.69587 (Windows x64); documented older version
+families (1.13.x, 1.14.x, 2.5.x, 3.4.x, 4.4.x, 9.x, 10.x) use the existing
+runtime strategy.
 
-### Runtime-mode features (deferred; not on the critical path)
+What remains:
 
-Empirical verification of Arctium's pattern catalogue against four
-WoW Classic builds (1.13.2.31650, 2.5.3.42328, 3.4.3.53788,
-4.4.2.60895) showed:
+- **Per-build Windows code patterns for older Classic builds**: Arctium's
+  Windows-specific code patterns (`CertBundle` JZ-NOP, `CertCommonName`
+  MOV-1, `CertChain` flag flip, `Integrity`, `Remap`) do not match the four
+  tested Classic builds (1.13.2.31650, 2.5.3.42328, 3.4.3.53788,
+  4.4.2.60895). Arctium's byte sequences are tuned for current retail
+  compiler output; older Classic builds need their own patterns derived per
+  build. The ported Arctium patterns live in
+  `src/patterns/runtime/{common,windows}.rs` (11 unit tests) and serve as
+  the starting point.
+- **Arxan anti-crash / anti-tamper writes**: the memory writes Arctium does
+  at process launch to suppress crash handlers and integrity checks.
 
-- The four data-only Common patterns (Portal + 3 RSA moduli for
-  pre-Wrath; Portal + ConnectTo + Ed25519 for Wrath+) hit cleanly
-  in their applicable builds. These all sit in `.rdata`, which is
-  not Arxan-encrypted, so they are reachable via static patching.
-- The Windows-specific code patterns (`CertBundle`, `CertCommonName`,
-  `CertChain`, `Integrity`, `Remap`) do **not** match any of the
-  four Classic builds. Arctium's byte sequences are tuned for the
-  current retail compiler output; older Classic builds need their
-  own patterns derived per build.
-- The libcurl public-key-pinning check uses the stock RSA modulus
-  in `.rdata` as its source of truth. Replacing the modulus (now
-  correctly written end-to-end after the truncation fix in commit
-  `5363c0e`) defeats the pin check without touching code in `.text`.
-
-Conclusion: the static patcher, with the truncation bug fixed, is
-sufficient to redirect Classic clients onto custom servers. Runtime
-patching becomes valuable only when:
-
-- A future Classic build adds new integrity checks or anti-tamper
-  guards in `.text` that the static patcher cannot reach.
-- We need to bypass `VerifyServerCertificateWithBundle` directly
-  (e.g. to ship a leaf cert whose CA is not in the embedded bundle
-  AND whose modulus differs from the replaced stock modulus).
-- Mod-loading or DLL-injection features are added.
-
-Verification details and per-build pattern hit counts are recorded
-in the management repo's Serena memory `analysis/wow-patcher-pattern-verification`.
-
-The `feat/runtime-patch-arctium` branch contains the partially-built
-runtime infrastructure:
-
-- `src/patterns/runtime/{common,windows}.rs`: ported Arctium patterns
-  with 11 unit tests. These remain useful when runtime mode is
-  revived; the Common patterns are universal and the Windows ones
-  serve as retail-current defaults.
-- `src/binary/mod.rs`: truncation fix + 3 regression tests + bounds
-  check. **This is the load-bearing change** and is on the branch
-  even though the rest of the runtime work is deferred.
-- `AGENTS.md`: runtime-mode design notes; this section.
+Verification details and per-build pattern hit counts are recorded in the
+management repo's Serena memory `analysis/wow-patcher-pattern-verification`.
 
 Out of scope for this crate (would belong in a separate tool):
 
@@ -472,7 +453,7 @@ Out of scope for this crate (would belong in a separate tool):
 - **DLL injection**: loads Classic-DLL for CASC hooks and Lua
   restriction removal.
 
-#### When to revive the runtime work
+#### When to derive per-build patterns
 
 Three triggers:
 
@@ -481,12 +462,12 @@ Three triggers:
    layer despite all four Common data patches landing). At that
    point, derive Windows code patterns per build using the existing
    Ghidra databases for `Wow.exe` / `WowClassic.exe`.
-2. We need cert-chain dev-mode bypass (e.g., presenting a
+2. We need cert-chain dev-mode bypass (e.g. presenting a
    different-CN leaf to satisfy the client's hostname matching).
 3. Mod-loading or auth-seed assembly injection becomes a goal.
 
-Until then: ship static patches only, verify via the per-build
-smoke-test framework in the management repo's PoC.
+Until then: the static patcher covers the auth-flow critical path; verify
+via the per-build smoke-test framework in the management repo's PoC.
 
 ### Other Missing Features
 
@@ -526,7 +507,7 @@ Use accurate terms: "add" for new features, "fix" for bug fixes, "update" for en
 - **Editor config**: `.editorconfig` with 4-space indent for Rust, LF line endings.
 - **Build script**: `build.rs` sets `GIT_COMMIT`, `GIT_VERSION`, `BUILD_DATE`, `BUILT_BY` env vars.
 - **Release profile**: LTO enabled, single codegen unit, stripped symbols.
-- **5 examples**: `basic_usage`, `battlenet_agent`, `custom_cdn`, `custom_keys` (has bug), `dry_run`.
+- **5 examples**: `basic_usage`, `battlenet_agent`, `custom_cdn`, `custom_keys`, `dry_run`.
 
 ## Examples
 
@@ -535,7 +516,7 @@ Five example programs demonstrate library usage:
 - `basic_usage.rs`: simple patching with TrinityCore defaults.
 - `battlenet_agent.rs`: Battle.net agent string patching.
 - `custom_cdn.rs`: custom CDN URL configuration.
-- `custom_keys.rs`: custom RSA and Ed25519 keys (has bug with entropy).
+- `custom_keys.rs`: custom RSA and Ed25519 keys from hex strings.
 - `dry_run.rs`: preview changes without modifying files.
 
 When adding features, add or update examples accordingly.

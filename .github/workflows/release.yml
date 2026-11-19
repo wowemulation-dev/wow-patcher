@@ -1,0 +1,212 @@
+---
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (no actual publishing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  determine-version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.determine.outputs.version }}
+      dry-run: ${{ steps.determine.outputs.dry-run }}
+    steps:
+      - name: Determine the version
+        id: determine
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set +u  # Allow unset variables (GitHub vars may be empty)
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$INPUT_VERSION"
+            DRY_RUN="$INPUT_DRY_RUN"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+            DRY_RUN="false"
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "dry-run=$DRY_RUN"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "::warning::DRY RUN MODE - No actual publishing will occur"
+          fi
+
+  release-libraries:
+    name: Release Library
+    needs: determine-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+        with:
+          lookup-only: true
+
+      - name: Verify version matches
+        env:
+          PACKAGE_NAME: ${{ vars.PACKAGE_NAME }}
+        run: |
+          set -o pipefail
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          if [ -n "$PACKAGE_NAME" ]; then
+            CRATE_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r ".packages[] | select(.name == \"$PACKAGE_NAME\") | .version")
+            if [[ "$CRATE_VERSION" != "$VERSION" ]]; then
+              echo "Version mismatch for $PACKAGE_NAME: expected $VERSION, found $CRATE_VERSION"
+              exit 1
+            fi
+          else
+            echo "No PACKAGE_NAME configured, skipping version check"
+          fi
+
+      - name: Run tests
+        run: cargo test --all-features --workspace
+
+      - name: Authenticate with crates.io
+        id: auth
+        if: ${{ needs.determine-version.outputs.dry-run != 'true' }}
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9  # v1.0.6
+
+      - name: Publish to crates.io (Dry Run)
+        if: ${{ needs.determine-version.outputs.dry-run == 'true' }}
+        env:
+          INDEPENDENT: ${{ vars.CRATE_PUBLISH_ORDER_INDEPENDENT || '[]' }}
+          DEPENDENT: ${{ vars.CRATE_PUBLISH_ORDER_DEPENDENT || '[]' }}
+        run: |
+          echo "::warning::DRY RUN MODE - Would publish these packages in dependency order:"
+          INDEPENDENT_COUNT=$(echo "$INDEPENDENT" | jq 'length')
+          DEPENDENT_COUNT=$(echo "$DEPENDENT" | jq 'length')
+
+          if [ "$INDEPENDENT_COUNT" -gt 0 ]; then
+            echo "First batch (independent): $(echo "$INDEPENDENT" | jq -r 'join(", ")')"
+          fi
+          if [ "$DEPENDENT_COUNT" -gt 0 ]; then
+            echo "Second batch (dependent): $(echo "$DEPENDENT" | jq -r 'join(", ")')"
+          fi
+          echo "::notice::No actual publishing performed"
+
+      - name: Publish to crates.io (Production)
+        if: ${{ needs.determine-version.outputs.dry-run != 'true' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          INDEPENDENT: ${{ vars.CRATE_PUBLISH_ORDER_INDEPENDENT || '[]' }}
+          DEPENDENT: ${{ vars.CRATE_PUBLISH_ORDER_DEPENDENT || '[]' }}
+        run: |
+          echo "::notice::Publishing packages to crates.io in dependency order..."
+
+          INDEPENDENT_COUNT=$(echo "$INDEPENDENT" | jq 'length')
+          DEPENDENT_COUNT=$(echo "$DEPENDENT" | jq 'length')
+
+          if [ "$INDEPENDENT_COUNT" -gt 0 ]; then
+            echo "::group::Publishing independent crates"
+            for crate in $(echo "$INDEPENDENT" | jq -r '.[]'); do
+              cargo publish -p "$crate" &
+            done
+            wait
+            echo "::endgroup::"
+
+            echo "::notice::Waiting for crates.io to index first batch..."
+            sleep 60
+          fi
+
+          if [ "$DEPENDENT_COUNT" -gt 0 ]; then
+            echo "::group::Publishing dependent crates"
+            FIRST=true
+            for crate in $(echo "$DEPENDENT" | jq -r '.[]'); do
+              if [ "$FIRST" = true ]; then
+                FIRST=false
+              else
+                echo "::notice::Waiting 30s between publishes to avoid rate limiting..."
+                sleep 30
+              fi
+              cargo publish -p "$crate"
+            done
+            echo "::endgroup::"
+
+            echo "::notice::Waiting for crates.io to index second batch..."
+            sleep 60
+          fi
+
+          echo "::notice::All packages published successfully!"
+
+  release-cli:
+    name: Release CLI
+    needs: determine-version
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-cli.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+      dry-run: ${{ needs.determine-version.outputs.dry-run == 'true' }}
+    secrets:
+      AGE_KEY_SECRET: ${{ secrets.AGE_KEY_SECRET }}
+
+  release-success:
+    name: Release Success
+    if: always()
+    needs: [determine-version, release-libraries, release-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check release status
+        run: |
+          echo "Version determination: ${{ needs.determine-version.result }}"
+          echo "Library release: ${{ needs.release-libraries.result }}"
+          echo "CLI release: ${{ needs.release-cli.result }}"
+
+          if [[ "${{ needs.determine-version.outputs.dry-run }}" != "true" ]]; then
+            if [[ "${{ needs.release-libraries.result }}" != "success" ]]; then
+              echo "Library release failed"
+              exit 1
+            fi
+            if [[ "${{ needs.release-cli.result }}" != "success" ]]; then
+              echo "CLI release failed"
+              exit 1
+            fi
+          fi
+
+          echo "All releases completed successfully!"

@@ -138,10 +138,9 @@ Dry run shows:
 - Replacement values that will be written
 
 ## What Is Not Patched
-
 - **Runtime code patches** (cert chain check bypass, integrity guards,
-  anti-tamper): These live in Arxan-encrypted `.text` and require the
-  deferred `launch` subcommand. The static patcher only modifies data
+  anti-tamper): These live in Arxan-encrypted `.text`. The `launch`
+  subcommand handles them in memory; the static patcher only modifies data
   sections (`.rdata` / `.data`).
 - **Cosmetic nydus URLs** (driver-unsupported, trial-restriction,
   gametime, checkout, checkoutnav): Not rewritten. `--bgs-portal-domain`

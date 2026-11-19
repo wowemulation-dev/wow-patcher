@@ -1,0 +1,334 @@
+---
+name: Release CLI (Ephemeral)
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to release'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (no actual release)'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AGE_KEY_SECRET:
+        description: 'AGE private key used to encrypt ephemeral signing keys'
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (no actual release)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: release-cli-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  generate-ephemeral-keys:
+    name: Generate Ephemeral Signing Keys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      key-id: ${{ steps.generate.outputs.key-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1
+        with:
+          toolchain: stable
+
+      - name: Generate ephemeral keypair
+        id: generate
+        env:
+          AGE_KEY_PUBLIC: ${{ vars.AGE_KEY_PUBLIC }}
+        run: |
+          ./ephemeral-gen.sh
+
+          set -o pipefail
+          KEY_ID=$(head -1 minisign.pub | sed 's/.*: //')
+          echo "key-id=${KEY_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ephemeral keys
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
+        with:
+          name: ephemeral-keys
+          path: |
+            minisign.pub
+            minisign.key.age
+          retention-days: 1
+
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: generate-ephemeral-keys
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+            archive: tar.gz
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+            archive: tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+            archive: tar.gz
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+            archive: zip
+
+          # macOS
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+            archive: tar.gz
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross for cross-compilation
+        if: matrix.use_cross
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519  # v2
+        with:
+          tool: cross
+
+      - name: Download ephemeral keys
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
+        with:
+          name: ephemeral-keys
+
+      - name: Cache signing tools
+        id: cache-signing
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6
+        with:
+          path: |
+            ~/.cargo/bin/rsign
+            ~/.cargo/bin/rage
+          key: signing-tools-${{ runner.os }}-rsign2-0.6.5-rage-0.11.1
+
+      - name: Install signing tools
+        if: steps.cache-signing.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo install rsign2 --locked
+          cargo install rage --locked
+
+      - name: Build binary
+        shell: bash
+        env:
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+          PACKAGE_NAME: ${{ vars.PACKAGE_NAME }}
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --package "$PACKAGE_NAME" --bin "$BINARY_DEFAULT" --target "${{ matrix.target }}"
+          else
+            cargo build --release --package "$PACKAGE_NAME" --bin "$BINARY_DEFAULT" --target "${{ matrix.target }}"
+          fi
+
+      - name: Package binary (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        env:
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          cd "target/${{ matrix.target }}/release"
+          tar czf "../../../${BINARY_DEFAULT}-${VERSION}-${{ matrix.target }}.tar.gz" "$BINARY_DEFAULT"
+
+      - name: Package binary (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        env:
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $staging = "${env:BINARY_DEFAULT}-${env:VERSION}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $staging -Force
+          Copy-Item "target/${{ matrix.target }}/release/${env:BINARY_DEFAULT}.exe" $staging/
+          Compress-Archive -Path $staging -DestinationPath "$staging.zip"
+
+      - name: Sign packages
+        env:
+          AGE_KEY_SECRET: ${{ secrets.AGE_KEY_SECRET }}
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          bash ./ephemeral-sign.sh "${BINARY_DEFAULT}-${VERSION}-${{ matrix.target }}.${{ matrix.archive }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            ${{ vars.BINARY_DEFAULT }}-*.tar.gz
+            ${{ vars.BINARY_DEFAULT }}-*.tar.gz.sig
+            ${{ vars.BINARY_DEFAULT }}-*.zip
+            ${{ vars.BINARY_DEFAULT }}-*.zip.sig
+            minisign.pub
+
+  create-release:
+    name: Create Release
+    needs: [generate-ephemeral-keys, build-binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        env:
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+        run: |
+          mkdir -p release
+
+          find artifacts -name "${BINARY_DEFAULT}-*" -type f -exec mv {} release/ \;
+
+          cp artifacts/binaries-*/minisign.pub release/ 2>/dev/null || cp artifacts/ephemeral-keys/minisign.pub release/
+
+          cd release
+          sha256sum "${BINARY_DEFAULT}"-*.{tar.gz,zip} > SHA256SUMS 2>/dev/null || true
+          cd ..
+
+          ls -la release/
+
+      - name: Create release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cat > release/RELEASE_NOTES.md << 'EOF'
+          ## ${{ vars.BINARY_DEFAULT }} v__VERSION__
+
+          ### Verification
+
+          This release uses ephemeral signing keys. To verify:
+
+          1. Download the binary, signature (`.sig`), and public key (`minisign.pub`)
+          2. Verify using minisign or rsign:
+
+          ```bash
+          # Using minisign
+          minisign -V -p minisign.pub -m ${{ vars.BINARY_DEFAULT }}-__VERSION__-<target>.tar.gz
+
+          # Using rsign
+          rsign verify -p minisign.pub ${{ vars.BINARY_DEFAULT }}-__VERSION__-<target>.tar.gz
+          ```
+
+          ### Ephemeral Key ID
+
+          This release was signed with ephemeral key: `${{ needs.generate-ephemeral-keys.outputs.key-id }}`
+
+          ### Installation
+
+          #### Unix-like systems
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          ```
+
+          #### Windows PowerShell
+          ```powershell
+          irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+          ```
+
+          ### Supported Platforms
+
+          - Linux: x86_64, aarch64 (GNU and musl)
+          - Windows: x86_64 (MSVC)
+          - macOS: aarch64 (Apple Silicon)
+
+          ### Checksums
+
+          SHA256 checksums are available in the `SHA256SUMS` file.
+          EOF
+          sed -i "s|__VERSION__|${VERSION}|g" release/RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BINARY_DEFAULT: ${{ vars.BINARY_DEFAULT }}
+          TAG_PREFIX: ${{ vars.TAG_PREFIX }}
+        run: |
+          TAG="${TAG_PREFIX}${VERSION}"
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git tag "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+          gh release create "${TAG}" \
+            --title "${BINARY_DEFAULT} v${VERSION}" \
+            --notes-file release/RELEASE_NOTES.md \
+            release/"${BINARY_DEFAULT}"-*.tar.gz \
+            release/"${BINARY_DEFAULT}"-*.tar.gz.sig \
+            release/"${BINARY_DEFAULT}"-*.zip \
+            release/"${BINARY_DEFAULT}"-*.zip.sig \
+            release/minisign.pub \
+            release/SHA256SUMS
+
+      - name: Dry run summary
+        if: ${{ inputs.dry-run }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "=== DRY RUN SUMMARY ==="
+          echo "Would have created release: ${{ vars.BINARY_DEFAULT }} v${VERSION}"
+          echo ""
+          echo "Files that would be uploaded:"
+          ls -la release/
+          echo ""
+          echo "Release notes:"
+          cat release/RELEASE_NOTES.md

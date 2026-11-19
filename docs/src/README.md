@@ -3,11 +3,16 @@
 World of Warcraft client patcher for TrinityCore-based private servers.
 
 ## What It Does
+wow-patcher modifies WoW client binaries to enable connections to private
+servers. It replaces embedded URLs and cryptographic keys with your server's
+configuration.
 
-wow-patcher modifies WoW client binaries on disk to enable connections to private servers. It replaces embedded URLs and cryptographic keys with your server's configuration.
+**Two patching modes**:
 
-**Key difference**: This tool modifies files on disk. It does not modify running processes (unlike runtime patchers).
-
+- **Static** (default command): modifies files on disk.
+- **Runtime** (`launch`, `dump-text`, `dump-sections` subcommands): launches
+  the client suspended, lets Arxan decrypt `.text` in memory, then patches
+  code and data via `WriteProcessMemory` before resuming.
 ## Supported Clients
 
 - Retail
