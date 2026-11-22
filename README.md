@@ -54,7 +54,7 @@ The patcher supports the following WoW client lines:
 | 2.5.x through 2.5.4   | The Burning Crusade, 2007    | Verified |
 | 3.4.x through 3.4.4   | Wrath of the Lich King, 2008 | Verified |
 | 4.4.x through 4.4.2   | Cataclysm, 2010              | Verified |
-| Retail 12.x (2024 to 2026) | Retail (current) | Verified (12.0.7.68887, 12.1.0.69587, runtime `launch`) |
+| Retail 12.x (2024 to 2026) | Retail (current) | Verified (12.0.7.68887, 12.1.0.69587, 12.1.5.70961, runtime `launch`) |
 
 Build numbers are the values reported by the client at its login screen and
 catalogued at [warcraft.wiki.gg][public-builds].
@@ -88,9 +88,13 @@ cargo build --release
 
 ## Usage
 
+See [USAGE.md](USAGE.md) for copy-paste 12.1.5.70961 examples, including
+Eracolgar, local TrinityCore setup, runtime arguments, and OpenSSL key and
+certificate generation.
+
 The [runtime `launch` command](docs/retail-runtime.md) selects its strategy from
 the file version. Retail 12.x and later use the new strategy; its verified
-Windows x64 recipes cover **12.0.7.68887** and **12.1.0.69587**.
+Windows x64 recipes cover **12.0.7.68887**, **12.1.0.69587** and **12.1.5.70961**.
 
 Run `wow-patcher --help` to see all options. The most common invocations:
 

@@ -134,6 +134,9 @@ fn newer_retail_versions_enter_retail_but_require_a_matching_recipe() {
         "12.1.0.69586",
         "12.1.0.69588",
         "12.0.7.69587",
+        "12.1.5.70960",
+        "12.1.5.70962",
+        "12.1.0.70961",
         "13.0.0.70000",
     ] {
         let dir = TempDir::new().unwrap();

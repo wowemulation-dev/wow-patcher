@@ -1,9 +1,32 @@
 use super::Result;
 use crate::platform::Version;
 
+pub(super) struct ExtraDataPatch {
+    pub name: &'static str,
+    pub rva: usize,
+    pub original: &'static str,
+    pub replacement: &'static str,
+}
+
+pub(super) struct LoaderRecipe {
+    pub state_pointer_rva: usize,
+    pub state_pointer_xor: u64,
+    pub lock_offset: usize,
+    pub status_offset: usize,
+    pub status_xor: u32,
+    pub publisher_rva: usize,
+    pub publisher_prologue: &'static [u8],
+    pub clone_notice_return_rva: usize,
+    pub mapping_rva: usize,
+    pub mapping_size: usize,
+}
+
 pub(super) struct Recipe {
     pub version: Version,
     pub text_size: usize,
+    pub entry_rva: usize,
+    pub scratch_rva: usize,
+    pub rdata_size: u32,
     pub resolver: usize,
     pub gate: usize,
     pub helper: usize,
@@ -14,9 +37,32 @@ pub(super) struct Recipe {
     pub urls: [usize; 2],
     pub image_hash: &'static str,
     pub loader_hash: &'static str,
+    pub extra_data: &'static [ExtraDataPatch],
+    pub loader: Option<LoaderRecipe>,
 }
 
-pub(super) const RECIPES: [Recipe; 2] = [
+const NO_EXTRA_DATA: &[ExtraDataPatch] = &[];
+const EXTRA_DATA_70961: &[ExtraDataPatch] = &[
+    ExtraDataPatch {
+        name: "Launcher login registry",
+        rva: 0x40d29b0,
+        original: "536f6674776172655c426c697a7a61726420456e7465727461696e6d656e745c426174746c652e6e65745c4c61756e6368204f7074696f6e735c",
+        replacement: "536f6674776172655c437573746f6d2047616d6520536572766572204465765c426174746c652e6e65745c4c61756e6368204f7074696f6e735c",
+    },
+    ExtraDataPatch {
+        name: "Launcher identifier",
+        rva: 0x3ef93d0,
+        original: "6172637469756d0069",
+        replacement: "62757272616c697300",
+    },
+];
+
+const PUBLISHER_PROLOGUE_70961: &[u8] = &[
+    0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x56, 0x57, 0x55, 0x53, 0x48, 0x81, 0xec, 0xb8,
+    0x01, 0x00, 0x00,
+];
+
+pub(super) const RECIPES: [Recipe; 3] = [
     Recipe {
         version: Version {
             major: 12,
@@ -25,6 +71,9 @@ pub(super) const RECIPES: [Recipe; 2] = [
             build: 68887,
         },
         text_size: 0x35c0b4c,
+        entry_rva: 0,
+        scratch_rva: 0,
+        rdata_size: 0,
         resolver: 0x33ff200,
         gate: 0x33f5543,
         helper: 0x265fc80,
@@ -35,6 +84,8 @@ pub(super) const RECIPES: [Recipe; 2] = [
         urls: [0x3993770, 0x39937b0],
         image_hash: "F8F4FDEE3C6FA291FC77F661B0C3F47B633332894223A4997AC167441FBF95FA",
         loader_hash: "D739A6C4B55CBE2960123120358DA82D7AB561DD017D9598C1A262AB6FF567C7",
+        extra_data: NO_EXTRA_DATA,
+        loader: None,
     },
     Recipe {
         version: Version {
@@ -44,6 +95,9 @@ pub(super) const RECIPES: [Recipe; 2] = [
             build: 69587,
         },
         text_size: 0x3783b4c,
+        entry_rva: 0x1d9e10,
+        scratch_rva: 0x3785000,
+        rdata_size: 0xb5081c,
         resolver: 0x35c1ab0,
         gate: 0x35b7f83,
         helper: 0x27f0380,
@@ -54,6 +108,43 @@ pub(super) const RECIPES: [Recipe; 2] = [
         urls: [0x3b4b100, 0x3b4b140],
         image_hash: "B773093EDF986C8085FDC990649BFCB33DF5F692C244BE7FDDF46C49B413923E",
         loader_hash: "BC06969951614D168081F7EBEC9513BBCEFEFFDC483BF0AFCD65915DBB29FFC4",
+        extra_data: NO_EXTRA_DATA,
+        loader: None,
+    },
+    Recipe {
+        version: Version {
+            major: 12,
+            minor: 1,
+            patch: 5,
+            build: 70961,
+        },
+        text_size: 0x3ac1e7c,
+        entry_rva: 0x1da9d0,
+        scratch_rva: 0x3ac3000,
+        rdata_size: 0xc1f6f2,
+        resolver: 0x38fd4e0,
+        gate: 0x38f37b3,
+        helper: 0x28b8e20,
+        result_bl: 0x28c8e76,
+        result_edi: 0x28c6561,
+        ed25519: 0x3aed970,
+        portal: 0x3ccf2b0,
+        urls: [0x3efc098, 0x3efc0d8],
+        image_hash: "75EAA7D66A4B02019D120CD9DE4F6ED441A137A3289D49DB95610C0349B4A11C",
+        loader_hash: "72F7DACD10F936FBC225624FBBE8B9DADC6B8B4E4A8B32B410C22AD01FFE2E13",
+        extra_data: EXTRA_DATA_70961,
+        loader: Some(LoaderRecipe {
+            state_pointer_rva: 0x21ac2a8,
+            state_pointer_xor: 0x8f6b3e1e78ca0310,
+            lock_offset: 0x88,
+            status_offset: 0x90,
+            status_xor: 0x6c0d0acf,
+            publisher_rva: 0x3c2cf0,
+            publisher_prologue: PUBLISHER_PROLOGUE_70961,
+            clone_notice_return_rva: 0x1474874,
+            mapping_rva: 0x10000,
+            mapping_size: 0x2040000,
+        }),
     },
 ];
 
@@ -66,12 +157,12 @@ impl Recipe {
     }
 
     pub fn holds_entry(&self) -> bool {
-        self.version.build == 69587
+        self.entry_rva != 0
     }
 
     pub fn stub_rva(&self) -> usize {
         if self.holds_entry() {
-            0x3785000
+            self.scratch_rva
         } else {
             super::TEXT_START + self.text_size
         }

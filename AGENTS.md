@@ -41,7 +41,7 @@ cargo clean            # Clean build artifacts
 ### Testing
 
 ```bash
-cargo nextest run                    # Run all tests (~149 tests)
+cargo nextest run                    # Run all tests (~165 tests)
 cargo nextest run -- --nocapture     # Run tests with output
 cargo nextest run test_name          # Run specific test
 ```
@@ -104,7 +104,8 @@ src/
     launch.rs     runtime launch (legacy strategy, Windows/Wine)
     dump.rs       dump-text and dump-sections (Windows/Wine)
     launch_strategy.rs  strategy selection from file version
-    retail/       retail runtime strategy (12.x recipes, Windows x64)
+    retail/       retail runtime strategy (12.x recipes, Windows x64); 70961 uses
+                  runtime_70961.rs and registry.rs for its loader-shim sequence
   errors/
     mod.rs        WowPatcherError, ErrorCategory, convenience constructors
   keys/
@@ -348,7 +349,7 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 9. macOS code signing removal via `codesign --remove-signature`.
 10. Section validation: verifies patches target data sections, not code sections.
 11. Client type detection: path-based heuristic for Retail, Classic, Classic Era.
-12. Runtime `launch` subcommand: strategy selected from file version; verified retail recipes for 12.0.7.68887 and 12.1.0.69587 (Windows x64); older version families use the existing runtime strategy.
+12. Runtime `launch` subcommand: strategy selected from file version; verified retail recipes for 12.0.7.68887, 12.1.0.69587 and 12.1.5.70961 (Windows x64); older version families use the existing runtime strategy.
 13. `dump-text` and `dump-sections` subcommands: recover Arxan-decrypted PE sections from a running client (Windows/Wine).
 14. Library API: builder-pattern `Patcher` struct with `WowPatcherError`, `KeyConfig`, `PatchGroup` re-exports.
 15. Custom key support: load from bytes, hex strings, or files.
@@ -392,7 +393,7 @@ Validation rules:
 
 - **Unit tests**: inline with each module using `#[cfg(test)]`.
 - **Integration tests**: in `tests/` directory, use `tempfile` for temporary files.
-- **Test coverage**: ~149 tests across all modules.
+- **Test coverage**: ~165 tests across all modules.
 - **Mock executables**: created in integration tests using `create_mock_executable()`.
 
 When adding features:
@@ -425,7 +426,7 @@ The integration test `test_patching_with_real_patterns` verifies the full 256-by
 
 Runtime mode is implemented: the `launch` subcommand selects its strategy
 from the executable's file version. Verified retail recipes cover
-12.0.7.68887 and 12.1.0.69587 (Windows x64); documented older version
+12.0.7.68887, 12.1.0.69587 and 12.1.5.70961 (Windows x64); documented older version
 families (1.13.x, 1.14.x, 2.5.x, 3.4.x, 4.4.x, 9.x, 10.x) use the existing
 runtime strategy.
 

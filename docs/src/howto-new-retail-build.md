@@ -214,5 +214,6 @@ fn retail_recipe_requires_all_four_version_components() {
 |---|---|---|---|
 | 12.0.7.68887 | `0x35C0B4C` | Split (skip 100 pages) | No |
 | 12.1.0.69587 | `0x3783B4C` | Full sweep from borrowed storage | Yes |
+| 12.1.5.70961 | `0x3AC1E7C` | Full sweep from borrowed storage with loader-status shim | Yes |
 
 Use these as templates for address discovery and layout determination. The Forever client (Classic Beta, build 70009) is based on the same retail engine and follows the same patterns — it just needs its own recipe entry once the addresses are reverse-engineered.

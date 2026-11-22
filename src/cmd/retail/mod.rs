@@ -5,7 +5,9 @@
 
 mod process;
 mod recipe;
+mod registry;
 mod runtime;
+mod runtime_70961;
 
 use std::{fs, path::PathBuf, time::Duration};
 
@@ -137,11 +139,11 @@ fn prepare(opts: &Options) -> Result<Plan> {
             .iter()
             .find(|s| s.name().ok() == Some(".rdata"))
             .ok_or("Missing .rdata section")?;
-        if pe.entry != 0x1d9e10
+        if pe.entry as usize != recipe.entry_rva
             || rdata.virtual_address as usize != recipe.stub_rva()
-            || rdata.virtual_size != 0xb5081c
+            || rdata.virtual_size != recipe.rdata_size
         {
-            return Err("Unexpected startup layout for 12.1.0.69587".into());
+            return Err(format!("Unexpected startup layout for {}", recipe.version).into());
         }
         let offset = text.pointer_to_raw_data as usize + pe.entry as usize - TEXT_START;
         bytes
@@ -206,13 +208,42 @@ fn prepare(opts: &Options) -> Result<Plan> {
                 "https://%s.version.battle.net/v2/products/%s/%s",
             ),
         ] {
+            let (anchor, capacity) = if recipe.loader.is_some() && rva == recipe.urls[0] {
+                (&original[..48], 48)
+            } else {
+                (original, original.len() + 1)
+            };
             add(
                 "Version URL",
                 rva,
-                original.as_bytes(),
-                padded_string(url, original.len() + 1)?,
+                anchor.as_bytes(),
+                padded_string(url, capacity)?,
             )?;
         }
+    }
+    for patch in recipe.extra_data {
+        add(
+            patch.name,
+            patch.rva,
+            &hex::decode(patch.original)?,
+            hex::decode(patch.replacement)?,
+        )?;
+    }
+    if recipe.loader.is_some() {
+        let order = [
+            recipe.urls[1],
+            recipe.urls[0],
+            recipe.ed25519,
+            recipe.portal,
+            recipe.extra_data[0].rva,
+            recipe.extra_data[1].rva,
+        ];
+        data.sort_by_key(|patch| {
+            order
+                .iter()
+                .position(|&rva| rva == patch.rva)
+                .unwrap_or(order.len())
+        });
     }
     Ok(Plan {
         entry_rva: pe.entry as usize,
@@ -238,11 +269,15 @@ pub(crate) fn run(opts: Options) -> Result<()> {
     println!("  Certificate file: {}", plan.certificate.display());
     if opts.dry_run {
         println!(
-            "Dry run: input checks passed; startup preparation and five code writes require a live process. No process started or files written."
+            "Dry run: input checks passed; startup preparation and runtime code writes require a live process. No process started or files written."
         );
         return Ok(());
     }
-    runtime::launch(&opts, &plan)?;
+    if plan.recipe.loader.is_some() {
+        runtime_70961::launch(&opts, &plan)?;
+    } else {
+        runtime::launch(&opts, &plan)?;
+    }
     Ok(())
 }
 

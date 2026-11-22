@@ -6,7 +6,7 @@ of a build-specific patch recipe are separate checks:
 
 | File version | Selected strategy |
 | --- | --- |
-| 12.x and later major versions | New retail strategy; verified recipes for **12.0.7.68887** and **12.1.0.69587** |
+| 12.x and later major versions | New retail strategy; verified recipes for **12.0.7.68887**, **12.1.0.69587** and **12.1.5.70961** |
 | 1.13.x, 1.14.x | Existing runtime strategy |
 | 2.5.0–2.5.4, 3.4.0–3.4.4, 4.4.0–4.4.2 | Existing runtime strategy |
 | 9.x, 10.x | Existing runtime strategy |
@@ -87,6 +87,23 @@ signatures can only be checked during a live launch.
    revalidate, and install the certificate-path hook and four code replacements.
 5. Verify every write and the earlier data replacements, then resume the client.
 
+Build 70961 uses a separate sequence. It holds the initial thread at entry RVA
+`0x1DA9D0`, validates the obfuscated loader state and selected publisher call,
+then filters loader status events through an injected shim. The loader code
+mapping is replaced at the same address with an RX page-file-backed copy; only
+the 19-byte publisher entry differs. It does not terminate loader worker
+threads. Six data patches cover both NGDP templates, the Ed25519 key, portal
+suffix, launcher registry path, and launcher identifier. After code warming,
+four local-file patches and the certificate resolver hook are installed and all
+registered writes are read back before the final resume. The custom
+launch-options registry is initialized on a best-effort basis.
+
+For 70961, the certificate table contains ID 7725530 and the supplied path.
+Unknown nonnegative IDs return null; negative IDs execute the relocated
+original prologue and continue in the original resolver. The 76-byte hook uses
+an 82-byte RX allocation. This differs from the older recipes, which forward
+all non-certificate IDs to their trampoline.
+
 The 69587 sites are resolver `0x35C1AB0`, path branch `0x35B7F87`, zero-return
 helper `0x27F0380`, and result writes `0x28003D6` and `0x27FDAC1`. The latter
 seven-byte write replaces a call and the first two bytes of `movzx r14d,al`;
@@ -94,12 +111,12 @@ remaining bytes `B6 F0` decode as `mov dh,0xF0`. This measured boundary is
 preserved, without claiming that it replaces whole original instructions or
 proves the surrounding certificate semantics.
 
-The hook returns the supplied PEM filename for file ID **7725530**. Every other
-ID uses the original resolver through a trampoline. The copied prologue is 13
-bytes of complete instructions without relative addressing. Memory writes
+For 68887 and 69587, the hook returns the supplied PEM filename for file ID
+**7725530**. Every other ID uses the original resolver through a trampoline.
+The copied prologue is 13 bytes of complete instructions without relative addressing. Memory writes
 restore the prior page protection and flush the instruction cache.
 
-These operations are separate recipes for the two recorded builds. Worker removal and the
+These operations are separate recipes for the three recorded builds. Worker removal and the
 individual certificate-result changes have not each been isolated in full
 authentication tests. They should not be generalized to other builds merely
 because an address is readable.
@@ -140,3 +157,17 @@ unchanged for both builds.
 | --- | --- |
 | 69587 `Wow.exe` | `B773093EDF986C8085FDC990649BFCB33DF5F692C244BE7FDDF46C49B413923E` |
 | 69587 `wow_loader.dll` | `BC06969951614D168081F7EBEC9513BBCEFEFFDC483BF0AFCD65915DBB29FFC4` |
+
+On 2026-11-22, the 70961 recipe passed a real-file dry run and a live Windows
+x64 launch. The loader shim, complete replacement mapping, data patches, code
+patches, certificate path/table/hook, and restored entry/scratch bytes were
+read back by the launcher. The client reached a responsive `World of Warcraft`
+window. Its executable and loader hashes were unchanged after the test. The
+test used the matching public certificate and an explicit build-pinned NGDP
+URL, then closed the test process. Authentication, realm selection, and world
+entry were not tested.
+
+| 70961 tested input | SHA-256 |
+| --- | --- |
+| `Wow.exe` | `75EAA7D66A4B02019D120CD9DE4F6ED441A137A3289D49DB95610C0349B4A11C` |
+| `wow_loader.dll` | `72F7DACD10F936FBC225624FBBE8B9DADC6B8B4E4A8B32B410C22AD01FFE2E13` |

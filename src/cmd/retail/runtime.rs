@@ -15,6 +15,30 @@ struct CodeSite {
 }
 
 fn code_sites(recipe: &Recipe) -> [CodeSite; 5] {
+    if recipe.version.build == 70961 {
+        return [
+            CodeSite {
+                rva: recipe.resolver,
+                signature: "48 89 5C 24 08 57 48 83 EC 20 48 8B F9",
+            },
+            CodeSite {
+                rva: recipe.gate,
+                signature: "41 F6 C5 01 74 5C",
+            },
+            CodeSite {
+                rva: recipe.helper,
+                signature: "48 89 5C",
+            },
+            CodeSite {
+                rva: recipe.result_bl,
+                signature: "32 DB",
+            },
+            CodeSite {
+                rva: recipe.result_edi,
+                signature: "E8 4A 3C 00 00 44 0F",
+            },
+        ];
+    }
     [
         CodeSite {
             rva: recipe.resolver,
@@ -59,7 +83,7 @@ fn matches(actual: &[u8], signature: &str) -> bool {
         })
 }
 
-fn validate_code(process: &Process, recipe: &Recipe) -> Result<()> {
+pub(super) fn validate_code(process: &Process, recipe: &Recipe) -> Result<()> {
     for site in code_sites(recipe) {
         let bytes = process.read(
             process.base + site.rva,
@@ -72,7 +96,7 @@ fn validate_code(process: &Process, recipe: &Recipe) -> Result<()> {
     Ok(())
 }
 
-fn wait_until<T>(
+pub(super) fn wait_until<T>(
     process: &Process,
     timeout: Duration,
     description: &str,
