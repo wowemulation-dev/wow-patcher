@@ -6,7 +6,7 @@ of a build-specific patch recipe are separate checks:
 
 | File version | Selected strategy |
 | --- | --- |
-| 12.x and later major versions | New retail strategy; verified recipes for **12.0.7.68887** and **12.1.0.69587** |
+| 12.x and later major versions | New retail strategy; verified recipes for **12.0.7.68887**, **12.1.0.69587** and **12.1.5.70961** |
 | 1.13.x, 1.14.x | Existing runtime strategy |
 | 2.5.0–2.5.4, 3.4.0–3.4.4, 4.4.0–4.4.2 | Existing runtime strategy |
 | 9.x, 10.x | Existing runtime strategy |

@@ -348,7 +348,7 @@ These restrictions apply to prose (conversations, documentation, comments, commi
 9. macOS code signing removal via `codesign --remove-signature`.
 10. Section validation: verifies patches target data sections, not code sections.
 11. Client type detection: path-based heuristic for Retail, Classic, Classic Era.
-12. Runtime `launch` subcommand: strategy selected from file version; verified retail recipes for 12.0.7.68887 and 12.1.0.69587 (Windows x64); older version families use the existing runtime strategy.
+12. Runtime `launch` subcommand: strategy selected from file version; verified retail recipes for 12.0.7.68887, 12.1.0.69587 and 12.1.5.70961 (Windows x64); older version families use the existing runtime strategy.
 13. `dump-text` and `dump-sections` subcommands: recover Arxan-decrypted PE sections from a running client (Windows/Wine).
 14. Library API: builder-pattern `Patcher` struct with `WowPatcherError`, `KeyConfig`, `PatchGroup` re-exports.
 15. Custom key support: load from bytes, hex strings, or files.
@@ -425,7 +425,7 @@ The integration test `test_patching_with_real_patterns` verifies the full 256-by
 
 Runtime mode is implemented: the `launch` subcommand selects its strategy
 from the executable's file version. Verified retail recipes cover
-12.0.7.68887 and 12.1.0.69587 (Windows x64); documented older version
+12.0.7.68887, 12.1.0.69587 and 12.1.5.70961 (Windows x64); documented older version
 families (1.13.x, 1.14.x, 2.5.x, 3.4.x, 4.4.x, 9.x, 10.x) use the existing
 runtime strategy.
 
