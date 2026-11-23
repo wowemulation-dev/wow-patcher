@@ -137,11 +137,16 @@ fn prepare(opts: &Options) -> Result<Plan> {
             .iter()
             .find(|s| s.name().ok() == Some(".rdata"))
             .ok_or("Missing .rdata section")?;
-        if pe.entry != 0x1d9e10
+        let (entry_rva, rdata_size) = match recipe.version.build {
+            69587 => (0x1d9e10, 0xb5081c),
+            70961 => (0x1da9d0, 0xc1f6f2),
+            _ => return Err("Missing entry-hold layout for retail recipe".into()),
+        };
+        if pe.entry as usize != entry_rva
             || rdata.virtual_address as usize != recipe.stub_rva()
-            || rdata.virtual_size != 0xb5081c
+            || rdata.virtual_size != rdata_size
         {
-            return Err("Unexpected startup layout for 12.1.0.69587".into());
+            return Err(format!("Unexpected startup layout for {}", recipe.version).into());
         }
         let offset = text.pointer_to_raw_data as usize + pe.entry as usize - TEXT_START;
         bytes
@@ -206,11 +211,16 @@ fn prepare(opts: &Options) -> Result<Plan> {
                 "https://%s.version.battle.net/v2/products/%s/%s",
             ),
         ] {
+            let (anchor, capacity) = if recipe.version.build == 70961 && rva == recipe.urls[0] {
+                (&original[..48], 48)
+            } else {
+                (original, original.len() + 1)
+            };
             add(
                 "Version URL",
                 rva,
-                original.as_bytes(),
-                padded_string(url, original.len() + 1)?,
+                anchor.as_bytes(),
+                padded_string(url, capacity)?,
             )?;
         }
     }

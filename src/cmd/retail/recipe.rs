@@ -16,7 +16,7 @@ pub(super) struct Recipe {
     pub loader_hash: &'static str,
 }
 
-pub(super) const RECIPES: [Recipe; 2] = [
+pub(super) const RECIPES: [Recipe; 3] = [
     Recipe {
         version: Version {
             major: 12,
@@ -55,6 +55,25 @@ pub(super) const RECIPES: [Recipe; 2] = [
         image_hash: "B773093EDF986C8085FDC990649BFCB33DF5F692C244BE7FDDF46C49B413923E",
         loader_hash: "BC06969951614D168081F7EBEC9513BBCEFEFFDC483BF0AFCD65915DBB29FFC4",
     },
+    Recipe {
+        version: Version {
+            major: 12,
+            minor: 1,
+            patch: 5,
+            build: 70961,
+        },
+        text_size: 0x3ac1e7c,
+        resolver: 0x38fd4e0,
+        gate: 0x38f37b3,
+        helper: 0x28b8e20,
+        result_bl: 0x28c8e76,
+        result_edi: 0x28c6561,
+        ed25519: 0x3aed970,
+        portal: 0x3ccf2b0,
+        urls: [0x3efc098, 0x3efc0d8],
+        image_hash: "75EAA7D66A4B02019D120CD9DE4F6ED441A137A3289D49DB95610C0349B4A11C",
+        loader_hash: "72F7DACD10F936FBC225624FBBE8B9DADC6B8B4E4A8B32B410C22AD01FFE2E13",
+    },
 ];
 
 impl Recipe {
@@ -66,14 +85,14 @@ impl Recipe {
     }
 
     pub fn holds_entry(&self) -> bool {
-        self.version.build == 69587
+        matches!(self.version.build, 69587 | 70961)
     }
 
     pub fn stub_rva(&self) -> usize {
-        if self.holds_entry() {
-            0x3785000
-        } else {
-            super::TEXT_START + self.text_size
+        match self.version.build {
+            69587 => 0x3785000,
+            70961 => 0x3ac3000,
+            _ => super::TEXT_START + self.text_size,
         }
     }
 }

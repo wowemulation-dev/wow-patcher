@@ -15,6 +15,30 @@ struct CodeSite {
 }
 
 fn code_sites(recipe: &Recipe) -> [CodeSite; 5] {
+    if recipe.version.build == 70961 {
+        return [
+            CodeSite {
+                rva: recipe.resolver,
+                signature: "48 89 5C 24 08 57 48 83 EC 20 48 8B F9",
+            },
+            CodeSite {
+                rva: recipe.gate,
+                signature: "41 F6 C5 01 74 5C",
+            },
+            CodeSite {
+                rva: recipe.helper,
+                signature: "48 89 5C",
+            },
+            CodeSite {
+                rva: recipe.result_bl,
+                signature: "32 DB",
+            },
+            CodeSite {
+                rva: recipe.result_edi,
+                signature: "E8 4A 3C 00 00 44 0F",
+            },
+        ];
+    }
     [
         CodeSite {
             rva: recipe.resolver,
@@ -266,5 +290,20 @@ mod tests {
                 .signature
                 .starts_with("48 89 5C 24 08 57 48 83 EC 20 48 8B F9")
         );
+    }
+
+    #[test]
+    fn recipe_70961_signatures_match_expected_runtime_bytes() {
+        let sites = code_sites(&recipe::RECIPES[2]);
+        for (index, bytes) in [
+            (0, "48895C2408574883EC20488BF9"),
+            (1, "41F6C501745C"),
+            (2, "48895C"),
+            (3, "32DB"),
+            (4, "E84A3C0000440F"),
+        ] {
+            let bytes = hex::decode(bytes).unwrap();
+            assert!(matches(&bytes, sites[index].signature));
+        }
     }
 }
